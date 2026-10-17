@@ -44,7 +44,9 @@ Voreingestellt ist WebUntis der **HTBLA Grieskirchen**; für eine andere Schule 
 - **Abgegeben in Eduvidual = abgehakt in Google Tasks:** Eine in Eduvidual eingereichte Abgabe hakt die Aufgabe „Bearbeiten: …“ automatisch ab.
   Gibt die Lehrkraft sie zur Überarbeitung zurück, entsteht eine **zweite** Aufgabe; die erste bleibt erledigt.
 - Es läuft ohne Server und ohne Dauerbetrieb: kurze Läufe über die Windows-Aufgabenplanung, kostenlos auf einem einzelnen Windows-PC.
-- Bei Problemen öffnet sich ein HTML-Bericht in deinem Browser. Bei Erfolg öffnet sich nichts.
+- Bei Problemen öffnet sich ein HTML-Bericht in deinem Browser, und Windows zeigt zusätzlich eine kurze **Benachrichtigung**
+  („SchulSync: Problem beim Abgleich“); beides höchstens einmal pro Problem und Tag. Bei Erfolg öffnet sich nichts.
+- `schulsync status` zeigt ohne Internet, was in den **nächsten 7 Tagen** ansteht und was neu erfasst wurde.
 
 **Es tut nicht:**
 
@@ -92,8 +94,14 @@ Passwörter und Daten bleiben erhalten; die neue Version gilt ab dem nächsten S
 ohne zu installieren: `schulsync update --check` (Exit-Code 10 = neue Version vorhanden). Das funktioniert nur, solange das Repository öffentlich ist und
 eine Release enthält.
 
-**Deinstallieren:** `schulsync autostart remove`, danach den Ordner `%LOCALAPPDATA%\Programs\SchulSync` löschen und den Eintrag aus dem PATH
-entfernen (Windows-Einstellungen, „Umgebungsvariablen“). Deine Daten liegen getrennt in `%LOCALAPPDATA%\SchulSync`.
+**Deinstallieren:**
+
+```powershell
+schulsync uninstall
+```
+
+Der Befehl entfernt den Autostart, den PATH-Eintrag und den Programmordner (der Ordner wird gelöscht, sobald sich das Fenster schließt).
+Deine Einstellungen, Passwörter und Daten in `%LOCALAPPDATA%\SchulSync` bleiben erhalten. Sie mitzulöschen: `schulsync uninstall --data` (mit Rückfrage).
 
 Beim Start über den Autostart kann das Konsolenfenster für einen Augenblick aufblitzen; es schließt sich sofort wieder.
 

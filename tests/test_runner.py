@@ -108,7 +108,7 @@ class TestContract:
         names = [f.name for f in fields(runner.Deps)]
         assert names == [
             "paths", "config", "adapter_factories", "gateway_factory", "clock", "sleep", "monotonic",
-            "open_report", "network_ready", "state",
+            "open_report", "network_ready", "state", "notify",
         ]  # fmt: skip
         d = runner.Deps(Paths(tmp_path), Config(), {}, lambda: None)
         assert d.clock is now_vienna and d.sleep is time.sleep and d.monotonic is time.monotonic

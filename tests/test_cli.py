@@ -196,7 +196,7 @@ def all_logs(paths: Paths) -> str:
 
 def test_version_and_help_are_german(env, io):
     assert main(["--version"], env=env) == 0
-    assert "SchulSync 1.0.0" in io.out
+    assert "SchulSync 1.1.0" in io.out
     assert main(["--help"], env=env) == 0
     for word in ("Aufruf:", "Befehle:", "Optionen:", "setup", "run", "preview", "check", "status", "restore", "report", "autostart", "--home"):
         assert word in io.out
@@ -1267,3 +1267,37 @@ def test_the_old_automation_hint_is_part_of_the_google_step_and_of_the_readme():
     assert "alte Schulautomation" in readme and "doppelte Einträge" in readme
     source = (Path(cli.__file__)).read_text(encoding="utf-8")
     assert "alte Schulautomation" in source and "doppelte Einträge" in source
+
+
+def test_status_shows_the_next_seven_days_and_new_entries(env, io, paths, config_file, now):
+    db = StateStore(paths.db)
+    soon = ItemState(item=samples.homework(title="Beispiele 12 bis 15"), item_hash="h", cancelled=False, first_seen_at=now, last_seen_at=now)
+    later = ItemState(item=samples.exam(title="Schularbeit Mathe"), item_hash="h2", cancelled=False, first_seen_at=now - timedelta(days=9), last_seen_at=now)
+    db.upsert(soon, now)
+    db.upsert(later, now)
+    db.close()
+    assert main(["status"], env=env) == 0
+    out = io.out
+    assert "Nächste 7 Tage:" in out and "Hausaufgabe: Beispiele 12 bis 15" in out
+    assert "Schularbeit Mathe" not in out.split("Nächste 7 Tage:")[1].split("Neu erfasst")[0]  # 28.10. is not within 7 days
+    assert "Neu erfasst (letzte 3 Tage): Hausaufgabe Beispiele 12 bis 15" in out
+
+
+def test_uninstall_from_source_only_removes_the_autostart(env, io, autostart_fake, monkeypatch):
+    called = []
+    monkeypatch.setattr(cli.frozen, "is_frozen", lambda: False)
+    monkeypatch.setattr(cli.frozen, "uninstall", lambda *a, **k: called.append(k))
+    assert main(["uninstall"], env=env) == 0
+    assert called == [] and "Quellcode-Version" in io.out
+
+
+@pytest.mark.parametrize("answer, deletes_data", [("j", True), ("n", False)])
+def test_uninstall_asks_before_deleting_the_data(env, io, paths, monkeypatch, answer, deletes_data):
+    called = []
+    monkeypatch.setattr(cli.frozen, "is_frozen", lambda: True)
+    monkeypatch.setattr(cli.frozen, "uninstall", lambda say, data_dir=None: called.append(data_dir))
+    io.answers.append(answer)
+    assert main(["uninstall", "--data"], env=env) == 0
+    assert called == [paths.home if deletes_data else None]
+    called.clear()
+    assert main(["uninstall"], env=env) == 0 and called == [None]  # without --data nothing is asked and nothing deleted

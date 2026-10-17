@@ -40,7 +40,7 @@ import sys
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, fields
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
@@ -57,6 +57,7 @@ from .models import (
     Category,
     CategoryStatus,
     EventState,
+    Kind,
     Notice,
     OverallStatus,
     ProbeReport,
@@ -642,6 +643,28 @@ def _check(s: _Session) -> int:
 # --------------------------------------------------------------------------- status
 
 
+_KIND_DE = {Kind.ASSIGNMENT: "Abgabe", Kind.HOMEWORK: "Hausaufgabe", Kind.EXAM: "Prüfung", Kind.CANCELLATION: "Entfall"}
+
+
+def _status_week(say: Callable[[str], None], store: StateStore, today: date) -> None:
+    """Wochenübersicht aus dem lokalen Stand (ohne Internet): was kommt in 7 Tagen, was ist neu."""
+    end = today + timedelta(days=7)
+    coming = sorted(
+        (it for it in store.all_items() if not it.cancelled and today <= it.item.when.start_date < end),
+        key=lambda it: (it.item.when.start_date, it.item.title),
+    )
+    say("Nächste 7 Tage:" if coming else "Nächste 7 Tage: nichts eingetragen.")
+    for it in coming[:15]:
+        t = it.item.when.start
+        when = to_vienna(t).strftime("%a %d.%m. %H:%M") if isinstance(t, datetime) else t.strftime("%a %d.%m.")
+        say(f"  {when}  {_KIND_DE[it.item.kind]}: {it.item.title}")
+    if len(coming) > 15:
+        say(f"  ... und {len(coming) - 15} weitere")
+    fresh = sorted((it for it in store.all_items() if to_vienna(it.first_seen_at).date() >= today - timedelta(days=3)), key=lambda it: it.first_seen_at, reverse=True)
+    if fresh:
+        say("Neu erfasst (letzte 3 Tage): " + "; ".join(f"{_KIND_DE[it.item.kind]} {it.item.title}" for it in fresh[:5]) + (" ..." if len(fresh) > 5 else ""))
+
+
 def _cmd_status(s: _Session) -> int:
     say = s.say
     cfg = s.config_or_none()
@@ -675,6 +698,7 @@ def _cmd_status(s: _Session) -> int:
                     say(f"    Anmeldung abgelehnt seit {_fmt(row.auth_blocked_at)}: automatische Läufe überspringen diese Quelle. "
                         f"Lösung: 'schulsync setup --{x.value}' oder 'schulsync check'.")
             say(f"Ausstehende Google-Schreibvorgänge: {store.pending_count()}")
+            _status_week(say, store, today)
             deleted = []
             for it in store.all_items():
                 parts = [n for n, hit in (("Termin", it.event_state == EventState.USER_DELETED),
@@ -989,7 +1013,19 @@ def _cmd_install(s: _Session) -> int:
     return 0
 
 
+def _cmd_uninstall(s: _Session) -> int:
+    s.say("SchulSync wird entfernt: Autostart, Programm und PATH-Eintrag.")
+    s.say(s.env.autostart.remove().details)
+    if not frozen.is_frozen():
+        s.say("Quellcode-Version: Lösche den Projektordner und die .venv selbst.")
+        return 0
+    data = s.paths.home if s.args.data and s.yes(f"Auch Einstellungen, Passwörter und Datenbank in {s.paths.home} unwiderruflich löschen?", False) else None
+    frozen.uninstall(s.say, data_dir=data)
+    return 0
+
+
 _COMMANDS: dict[str, Callable[[_Session], int]] = {
+    "uninstall": _cmd_uninstall,
     "update": _cmd_update,
     "install": _cmd_install,
     "setup": _cmd_setup,
@@ -1076,6 +1112,8 @@ def _build_parser(say: Callable[[str], None]) -> argparse.ArgumentParser:
     add("report", "Den neuesten Bericht im Browser öffnen")
     p = add("update", "Prüft, ob es eine neue Version gibt, und installiert sie (nur fertige schulsync.exe)")
     p.add_argument("--check", action="store_true", help="nur prüfen, nichts installieren (Exit-Code 10 = neue Version vorhanden)")
+    p = add("uninstall", "Entfernt Autostart, Programm und PATH-Eintrag (Daten bleiben, außer mit --data)")
+    p.add_argument("--data", action="store_true", help="auch Einstellungen, Passwörter und Datenbank löschen (mit Rückfrage)")
     add("install", "Installiert die schulsync.exe für deinen Benutzer (Programme-Ordner und PATH)")
     p = add("autostart", "Start nach der Windows-Anmeldung einrichten, entfernen oder anzeigen")
     p.add_argument("action", choices=("install", "remove", "status"), metavar="install|remove|status", help="Aktion")

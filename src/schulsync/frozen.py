@@ -100,3 +100,43 @@ def install(say: Callable[[str], None]) -> Path:
     if add_to_user_path(target_dir):
         say("Der Ordner steht jetzt im PATH. Öffne ein NEUES PowerShell-Fenster, dann funktioniert der Befehl 'schulsync' überall.")
     return target
+
+
+def remove_from_user_path(folder: Path) -> bool:
+    """Ordner aus dem Benutzer-PATH entfernen; True, wenn er enthalten war."""
+    import winreg
+
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_READ | winreg.KEY_WRITE) as key:
+        try:
+            current, kind = winreg.QueryValueEx(key, "Path")
+        except FileNotFoundError:
+            return False
+        parts = [p for p in str(current).split(";") if p]
+        keep = [p for p in parts if os.path.normcase(p.rstrip("\\")) != os.path.normcase(str(folder))]
+        if len(keep) == len(parts):
+            return False
+        winreg.SetValueEx(key, "Path", 0, kind, ";".join(keep))
+    return True
+
+
+def _delete_later(folders: list[Path]) -> None:
+    """Löscht Ordner nach dem Beenden dieses Programms (die laufende .exe kann sich nicht selbst löschen)."""
+    import subprocess
+
+    for f in folders:
+        if f.name.lower() not in ("schulsync",):  # nie einen fremden Ordner löschen
+            raise ValueError(f"Unerwarteter Ordner: {f}")
+    cmd = " & ".join(f'rmdir /s /q "{f}"' for f in folders)
+    subprocess.Popen(["cmd.exe", "/c", f"ping -n 3 127.0.0.1 >nul & {cmd}"], creationflags=0x08000000 | 0x00000008, close_fds=True)
+
+
+def uninstall(say: Callable[[str], None], *, data_dir: Path | None = None) -> None:
+    """PATH-Eintrag entfernen und den Programmordner (auf Wunsch auch den Datenordner) nach dem Beenden löschen."""
+    target = install_dir()
+    if remove_from_user_path(target):
+        say("Der Eintrag im PATH wurde entfernt.")
+    folders = [target] + ([data_dir] if data_dir else [])
+    _delete_later(folders)
+    say("Gelöscht wird nach dem Beenden dieses Fensters: " + ", ".join(str(f) for f in folders))
+    if data_dir is None:
+        say("Deine Einstellungen, Passwörter und Daten bleiben erhalten (deinstallieren mit Daten: 'schulsync uninstall --data').")

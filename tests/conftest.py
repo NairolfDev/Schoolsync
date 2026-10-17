@@ -30,3 +30,11 @@ def _no_bundled_client_json(monkeypatch):
 
     monkeypatch.setattr(google_auth, "bundled_client_json", lambda: None)
     monkeypatch.setattr(factories, "bundled_client_json", lambda: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_toasts(monkeypatch):
+    """Tests must never pop up a real Windows notification."""
+    from schulsync import notify
+
+    monkeypatch.setattr(notify, "toast", lambda title, text: True)

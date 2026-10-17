@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, TypeVar
 from urllib.parse import urlsplit
 
-from . import logging_setup, report as report_mod, rules
+from . import logging_setup, notify as notify_mod, report as report_mod, rules
 from .config import RUN_TIMES, Config, Paths
 from .dryrun import DryRunGateway
 from .errors import AuthError, ConfigError, ErrorInfo, SchulSyncError, TransientError
@@ -171,6 +171,7 @@ class Deps:
     open_report: Callable[[Path], bool] = report_mod.open_report
     network_ready: Callable[[], bool] = default_network_ready
     state: StateStore | None = None
+    notify: Callable[[str, str], bool] = lambda title, text: notify_mod.toast(title, text)  # looked up at call time (tests patch it)
 
 
 @dataclass
@@ -824,6 +825,11 @@ class _Run:
             ok = bool(self.deps.open_report(path))
         except Exception:  # noqa: BLE001
             ok = False
+        if report.needs_attention:  # also when the browser could not be opened: the toast is the second way to notice
+            try:
+                self.deps.notify("SchulSync: Problem beim Abgleich", "Nicht alles konnte übernommen werden. Der Bericht liegt im Browser; 'schulsync report' öffnet ihn erneut.")
+            except Exception:  # noqa: BLE001 - a notification must never break the run
+                log.warning("Benachrichtigung fehlgeschlagen.")
         if ok:
             if self.real is not None:
                 self._safe(lambda: self.real.mark_report_opened(self.day, fp, self.deps.clock()), "Berichtsstatus speichern")  # type: ignore[union-attr]
