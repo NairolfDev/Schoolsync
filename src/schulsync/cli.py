@@ -48,6 +48,7 @@ from . import __version__, factories, google_auth, runner
 from . import autostart as autostart_module
 from .config import Config, Paths, ReportConfig, load_config, set_config_value
 from .errors import ConfigError, ErrorInfo, GoogleAuthError, SchulSyncError
+from . import frozen, update as updater
 from .google_client import call_api
 from .google_targets import TargetsUnavailableError
 from .lock import LockHeldError, ProcessLock
@@ -701,7 +702,7 @@ def _cmd_status(s: _Session) -> int:
 
 
 def _repo_example_config() -> Path:
-    return Path(__file__).resolve().parents[2] / "config.example.toml"
+    return frozen.resource("config.example.toml") or Path(__file__).resolve().parents[2] / "config.example.toml"
 
 
 def _write_default_config(path: Path) -> None:
@@ -973,7 +974,24 @@ def _setup(s: _Session) -> int:
 
 # --------------------------------------------------------------------------- argument parser (German)
 
+def _cmd_update(s: _Session) -> int:
+    return updater.run_update(s.say, check_only=bool(s.args.check))
+
+
+def _cmd_install(s: _Session) -> int:
+    if not frozen.is_frozen():
+        s.say("'install' gibt es nur in der fertigen schulsync.exe. Aus dem Quellcode: scripts\\install.ps1.")
+        return 1
+    frozen.install(s.say)
+    if s.yes("Jetzt einrichten (Google, Eduvidual, WebUntis)?", True):
+        return _cmd_setup(s)
+    s.say("Später mit 'schulsync setup' einrichten.")
+    return 0
+
+
 _COMMANDS: dict[str, Callable[[_Session], int]] = {
+    "update": _cmd_update,
+    "install": _cmd_install,
     "setup": _cmd_setup,
     "run": _cmd_run,
     "preview": _cmd_preview,
@@ -1056,6 +1074,9 @@ def _build_parser(say: Callable[[str], None]) -> argparse.ArgumentParser:
     p = add("restore", "Von dir in Google gelöschte Einträge ausdrücklich wiederherstellen")
     p.add_argument("uids", nargs="*", metavar="UID", help="Kennungen laut 'schulsync status' (ohne Angabe: alle)")
     add("report", "Den neuesten Bericht im Browser öffnen")
+    p = add("update", "Prüft, ob es eine neue Version gibt, und installiert sie (nur fertige schulsync.exe)")
+    p.add_argument("--check", action="store_true", help="nur prüfen, nichts installieren (Exit-Code 10 = neue Version vorhanden)")
+    add("install", "Installiert die schulsync.exe für deinen Benutzer (Programme-Ordner und PATH)")
     p = add("autostart", "Start nach der Windows-Anmeldung einrichten, entfernen oder anzeigen")
     p.add_argument("action", choices=("install", "remove", "status"), metavar="install|remove|status", help="Aktion")
     return parser
@@ -1103,3 +1124,19 @@ def main(argv: list[str] | None = None, *, env: CliEnv | None = None) -> int:
         return _fail(session, exc)
     finally:
         shutdown_logging()
+
+
+def entry() -> int:
+    """Einstieg der fertigen schulsync.exe. Ohne Befehl (Doppelklick) wird installiert; im Autostart verschwindet das Fenster."""
+    argv = sys.argv[1:]
+    frozen.remove_old_exe()
+    auto = "run" in argv and "--auto" in argv
+    if auto:
+        frozen.hide_console()
+    if not argv:
+        argv = ["install"]
+    pause = frozen.own_console() and not auto
+    code = main(argv)
+    if pause:
+        input("Enter drücken zum Schließen ...")
+    return code

@@ -121,8 +121,11 @@ _SUCCESS = "Anmeldung abgeschlossen. Du kannst dieses Fenster schließen und zu 
 def bundled_client_json() -> str | None:
     """OAuth client JSON that sits in the project folder (private repo): `google_client.json` or the
     `client_secret*.json` downloaded from Google. None if absent. Only meaningful for an editable install."""
-    root = Path(__file__).resolve().parents[2]
-    for path in [root / "google_client.json", *sorted(root.glob("client_secret*.json"))]:
+    from . import frozen
+    from .config import Paths
+
+    roots = [frozen.exe_path().parent, Paths.default().home] if frozen.is_frozen() else [Path(__file__).resolve().parents[2]]
+    for path in [p for root in roots for p in (root / "google_client.json", *sorted(root.glob("client_secret*.json")))]:
         try:
             return path.read_text(encoding="utf-8-sig")
         except OSError:

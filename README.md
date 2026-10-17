@@ -69,6 +69,36 @@ Voreingestellt ist WebUntis der **HTBLA Grieskirchen**; für eine andere Schule 
 
 ## 3. Installation
 
+### Variante A (empfohlen): fertige `SchulSync-Setup.exe`
+
+Du brauchst weder Python noch Git.
+
+1. Lade auf der Seite **Releases** dieses Repositories die Datei **`SchulSync-Setup.exe`** der neuesten Version herunter.
+2. **Doppelklick.** Windows zeigt eventuell „Der Computer wurde durch Windows geschützt“ (die Datei ist nicht signiert): **Weitere Informationen**,
+   dann **Trotzdem ausführen**. Manche Virenscanner melden bei Programmen dieser Art Fehlalarme; den Quellcode kannst du hier selbst prüfen und die Datei selbst bauen
+   (Abschnitt 16).
+3. Das Fenster (es führt `schulsync install` aus, das du auch selbst eingeben kannst) installiert SchulSync nach `%LOCALAPPDATA%\Programs\SchulSync`, trägt den Ordner in deinen PATH ein (ohne Adminrechte) und fragt, ob
+   du gleich einrichten willst (Abschnitt 6). Danach in einem **neuen** PowerShell-Fenster: `schulsync --help`.
+4. Die Google-Client-Datei (Abschnitt 4.4) legst du in `%LOCALAPPDATA%\Programs\SchulSync` (neben die `schulsync.exe`); `schulsync setup --google` findet sie dort.
+
+**Aktualisieren:**
+
+```powershell
+schulsync update
+```
+
+Der Befehl fragt GitHub nach der neuesten Version, lädt sie herunter, prüft die SHA-256-Prüfsumme und ersetzt die `schulsync.exe`. Einstellungen,
+Passwörter und Daten bleiben erhalten; die neue Version gilt ab dem nächsten Start (auch für den Autostart, der denselben Pfad nutzt). Nur nachsehen,
+ohne zu installieren: `schulsync update --check` (Exit-Code 10 = neue Version vorhanden). Das funktioniert nur, solange das Repository öffentlich ist und
+eine Release enthält.
+
+**Deinstallieren:** `schulsync autostart remove`, danach den Ordner `%LOCALAPPDATA%\Programs\SchulSync` löschen und den Eintrag aus dem PATH
+entfernen (Windows-Einstellungen, „Umgebungsvariablen“). Deine Daten liegen getrennt in `%LOCALAPPDATA%\SchulSync`.
+
+Beim Start über den Autostart kann das Konsolenfenster für einen Augenblick aufblitzen; es schließt sich sofort wieder.
+
+### Variante B: aus dem Quellcode
+
 Öffne PowerShell im SchulSync-Ordner (dem Ordner, in dem diese README liegt) und führe aus:
 
 ```powershell
@@ -149,7 +179,7 @@ Menü (☰) **Google Auth Platform** (bei älteren Oberflächen: „APIs & Diens
 1. **Google Auth Platform**, **Clients** (bei älteren Oberflächen: „APIs & Dienste“, „Anmeldedaten“, „Anmeldedaten erstellen“, „OAuth-Client-ID“).
 2. **Client erstellen**, Anwendungstyp **Desktop-App**, Name beliebig (z. B. `SchulSync PC`).
 3. **JSON herunterladen** (Dateiname etwa `client_secret_....json`). Das ist deine „OAuth-Client-Datei“.
-4. **Lege die Datei in den SchulSync-Ordner** (dorthin, wo diese README liegt). `schulsync setup --google` findet sie dort automatisch,
+4. **Lege die Datei in den SchulSync-Ordner** (Quellcode: dorthin, wo diese README liegt; fertige .exe: `%LOCALAPPDATA%\Programs\SchulSync`). `schulsync setup --google` findet sie dort automatisch,
    du musst keinen Pfad eingeben. Liegt keine Datei dort, fragt der Assistent nach dem Pfad. Der Inhalt wird zusätzlich geschützt gespeichert
    (Abschnitt 13).
 5. **Gib die Datei nie weiter und lade sie nirgends hoch.** `.gitignore` schließt `client_secret*.json` aus, damit sie nicht in Git landet.
@@ -534,3 +564,21 @@ Kurz gesagt (rechtlich gilt nur der Lizenztext):
 
 **Bitte veröffentliche nie** deine OAuth-Client-Datei (`client_secret_….json`), deine `config.toml`, `secrets.dat` oder die Datenbank aus
 `%LOCALAPPDATA%\SchulSync`. Sie gehören nicht ins Repository; `.gitignore` schließt sie aus.
+
+### Die fertige .exe bauen und veröffentlichen (für Entwickler)
+
+Lokal bauen (erzeugt `dist\SchulSync-Setup.exe` und die Prüfsumme `dist\SchulSync-Setup.exe.sha256`):
+
+```powershell
+powershell -File scripts\build_exe.ps1
+```
+
+Veröffentlichen: Erhöhe `__version__` in `src/schulsync/__init__.py` (und `version` in `pyproject.toml`), committe, und pushe einen passenden Tag:
+
+```powershell
+git tag v1.0.1
+git push origin v1.0.1
+```
+
+Der Workflow `.github/workflows/release.yml` führt die Tests aus, baut die .exe und legt auf GitHub eine Release mit `SchulSync-Setup.exe` und der Prüfsumme an.
+`schulsync update` nutzt genau diese beiden Dateien. Ein Fork setzt die Umgebungsvariable `SCHULSYNC_REPO=besitzer/repo`.

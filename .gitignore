@@ -23,3 +23,6 @@ logs/
 
 # erzeugte Beispielberichte
 tests/_out/
+dist/
+build/
+*.spec

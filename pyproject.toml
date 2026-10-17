@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "schulsync"
-version = "0.1.0"
+version = "1.0.0"
 description = "SchulSync: synchronisiert Eduvidual und WebUntis nach Google Kalender und Google Tasks (regelbasiert, ohne KI)"
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -23,6 +23,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+build = ["pyinstaller>=6"]
 
 [project.scripts]
 schulsync = "schulsync.cli:main"

@@ -50,6 +50,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from . import frozen
 from .config import ENV_HOME, RUN_TIMES, Paths
 
 TASK_NAME = "SchulSync"
@@ -174,6 +175,8 @@ def default_command() -> tuple[str, str]:
     Der Pfad wird unverändert zurückgegeben (kein Quoting): Task-XML-<Command> und COM-`TargetPath` erwarten den reinen Pfad.
     Ohne pythonw.exe wird der aktuelle Interpreter genommen. Hinweis: unter pythonw ist `sys.stdout` None.
     """
+    if frozen.is_frozen():  # fertige schulsync.exe: startet sich selbst (das Fenster schließt sie im Autostart sofort)
+        return str(frozen.exe_path()), RUN_ARGUMENTS.removeprefix("-m schulsync ")
     exe = Path(sys.executable)
     pythonw = exe.with_name("pythonw.exe")
     if exe.name.lower() == "pythonw.exe" or pythonw.exists():
