@@ -187,7 +187,7 @@ class _TextExtractor(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self._out: list[str] = []
-        self._pending = 0  # newlines waiting to be written before the next text
+        self._pending_breaks = 0  # newlines waiting to be written before the next text
         self._skip = 0
         self._lists = 0  # nesting depth of ul/ol (nested lists need no blank line)
         self._in_li = False  # inside a list item: <p> etc. must not add blank lines between bullets
@@ -199,19 +199,19 @@ class _TextExtractor(HTMLParser):
     def _newline(self, count: int) -> None:
         if self._after_marker:
             return
-        self._pending = max(self._pending, count)
+        self._pending_breaks = max(self._pending_breaks, count)
 
     def _write(self, text: str) -> None:
         if not text:
             return
-        if self._pending and self._out:
-            self._out.append("\n" * self._pending)
-        self._pending = 0
+        if self._pending_breaks and self._out:
+            self._out.append("\n" * self._pending_breaks)
+        self._pending_breaks = 0
         self._after_marker = False
         self._out.append(text)
 
     def _at_line_start(self) -> bool:
-        return not self._out or self._out[-1].endswith("\n") or self._pending > 0
+        return not self._out or self._out[-1].endswith("\n") or self._pending_breaks > 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in ("script", "style"):
@@ -220,11 +220,11 @@ class _TextExtractor(HTMLParser):
         if self._skip:
             return
         if tag == "br":
-            self._newline(max(self._pending, 1) if self._pending else 1)
+            self._newline(max(self._pending_breaks, 1) if self._pending_breaks else 1)
             if not self._out:
                 return
             self._out.append("\n")  # an explicit <br> is always one line break
-            self._pending = 0
+            self._pending_breaks = 0
             return
         if tag == "li":
             self._newline(1)
