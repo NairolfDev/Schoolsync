@@ -1,0 +1,15 @@
+{"_comment": "synthetic, not recorded. Struktur nach SchoolUtils/stundenglas (data.homeworks, data.lessons).",
+ "data": {
+  "homeworks": [
+   {"id": 9001, "lessonId": 3301, "date": 20261012, "dueDate": 20261016, "text": "Übungsblatt 4,\n  Aufgaben 1-6 lösen  ", "remark": "Bitte sauber ausarbeiten", "completed": false, "attachments": []},
+   {"id": 9002, "lessonId": 3302, "date": 20261013, "dueDate": 20261020, "text": "<p>Gedichtanalyse &amp; Interpretation</p><p>Seite 42</p>", "remark": "", "completed": true, "attachments": [{"id": 1, "name": "blatt.pdf"}]},
+   {"id": 9003, "lessonId": 3305, "date": 20261013, "dueDate": 20261104, "text": "Projektdokumentation abgeben", "remark": "", "completed": false, "attachments": []},
+   {"id": 9004, "lessonId": 3305, "date": 20261001, "dueDate": 20261013, "text": "Schon abgelaufen", "remark": "", "completed": false, "attachments": []},
+   {"id": 9005, "lessonId": 3301, "date": 20261013, "dueDate": 0, "text": "Ohne Datum", "remark": "", "completed": false, "attachments": []}
+  ],
+  "lessons": [
+   {"id": 3301, "subject": "AM", "lessonType": "Unterricht"},
+   {"id": 3302, "subject": "D", "lessonType": "Unterricht"},
+   {"id": 3305, "subject": "POS", "lessonType": "Unterricht"}
+  ]
+ }}

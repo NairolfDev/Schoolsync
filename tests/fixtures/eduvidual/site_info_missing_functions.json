@@ -1,0 +1,11 @@
+{
+  "sitename": "eduvidual.at",
+  "userid": 90210,
+  "functions": [
+    {
+      "name": "core_webservice_get_site_info",
+      "version": "2024100700"
+    }
+  ],
+  "release": "4.5.2 (Build: 20250314)"
+}

@@ -1,0 +1,5 @@
+{"_comment": "synthetic, not recorded. Zweite Form laut stundenglas core/src/untis.rs (ExamEnvelope/ExamRaw): bare Umschlag, ISO-Zeiten.",
+ "exams": [
+  {"id": 5601, "examType": "Schularbeit", "name": "3. Schularbeit", "startDateTime": "2026-10-22T10:30:00", "endDateTime": "2026-10-22T12:20:00",
+   "subject": "D", "teachers": ["BEI"], "rooms": ["R102"], "text": ""}
+ ]}

@@ -1,0 +1,24 @@
+<!-- SYNTHETIC, NOT RECORDED: mirrors the structure of Moodle's login/index.php (form id="login" with
+     anchor, logintoken, username, password; plus the guest form). Dummy token values only. -->
+<!DOCTYPE html>
+<html lang="de"><head><title>eduvidual.at: Login</title></head>
+<body>
+<div class="loginform">
+  <form action="https://www.eduvidual.at/login/index.php" method="post" id="login">
+    <input id="anchor" type="hidden" name="anchor" value="">
+    <script>document.getElementById('anchor').value = location.hash;</script>
+    <input type="hidden" name="logintoken" value="dummy-logintoken-LOGIN">
+    <input type="text" name="username" id="username" value="">
+    <input type="password" name="password" id="password" value="">
+    <button type="submit" id="loginbtn">Anmelden</button>
+  </form>
+</div>
+<div class="guestform">
+  <form action="https://www.eduvidual.at/login/index.php" method="post" id="guestlogin">
+    <input type="hidden" name="logintoken" value="dummy-logintoken-GUEST">
+    <input type="hidden" name="username" value="guest">
+    <input type="hidden" name="password" value="guest">
+    <button type="submit">Als Gast anmelden</button>
+  </form>
+</div>
+</body></html>

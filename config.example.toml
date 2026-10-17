@@ -1,0 +1,47 @@
+# SchulSync – Beispielkonfiguration (KEINE Geheimnisse hier eintragen!)
+#
+# Passwörter und Google-Anmeldedaten werden bei "schulsync setup" abgefragt und
+# verschlüsselt im Windows-Benutzerprofil gespeichert (DPAPI), nicht in dieser Datei.
+# Diese Datei wird bei der Einrichtung nach %LOCALAPPDATA%\SchulSync\config.toml kopiert.
+
+[eduvidual]
+enabled = true
+base_url = "https://www.eduvidual.at"
+username = ""                 # Eduvidual-Benutzername (wird bei der Einrichtung gesetzt)
+method = "auto"               # auto | webservice | web
+courses = []                  # leer = alle aktuellen, sichtbaren Kurse; sonst Kurs-IDs oder exakte Kursnamen
+modules = ["assign"]          # Aktivitätstypen, die als Aufgaben/Abgaben gelten
+
+[webuntis]
+enabled = true
+base_url = "https://htbla-grieskirchen.webuntis.com"
+school = "htbla-grieskirchen"
+username = ""                 # WebUntis-Benutzername (wird bei der Einrichtung gesetzt)
+categories = ["homework", "exams", "cancellations"]   # Hausaufgaben, Prüfungen, Unterrichtsentfälle
+
+[google]
+account = ""                  # optional: deine Google-Adresse; dann prüft setup, dass du das richtige Konto wählst
+calendar_name = "Schule"      # bestehender Kalender; es wird NIE auf den Hauptkalender ausgewichen
+calendar_id = ""              # wird bei der Einrichtung gesetzt
+tasklist_title = "Schule"     # Google-Tasks-Liste (wird bei der Einrichtung angelegt, falls nicht vorhanden)
+tasklist_id = ""              # wird bei der Einrichtung gesetzt
+
+[rules]
+window_days = 31              # neue Termine: heute 00:00 bis heute + 31 Kalendertage 00:00 (exklusiv)
+assignment_lead_days = 3      # Eduvidual-Abgabe: Task-Datum = Frist minus 3 Kalendertage
+homework_lead_days = 3        # WebUntis-Hausaufgabe: Frist minus 3 Kalendertage
+exam_lead_days = 7            # Prüfung/Schularbeit: Termin minus 7 Kalendertage
+reminder_minutes = 1440       # Kalender-Popup-Erinnerung: 24 Stunden vorher
+
+[retry]
+max_attempts = 4              # Versuche je Quelle (inkl. erstem Versuch)
+delays_seconds = [15, 60, 180]  # zunehmende Wartezeit zwischen den Versuchen
+network_wait_seconds = 120    # so lange wird direkt nach der Anmeldung auf Internet gewartet
+connect_timeout = 10
+read_timeout = 30
+run_timeout_seconds = 1500    # harte Obergrenze pro Lauf
+
+[report]
+open_on = "problems"          # problems | warnings | never – wann der HTML-Bericht im Browser geöffnet wird
+keep_days = 30                # Berichte so lange aufbewahren
+log_keep_days = 30            # Logdateien so lange aufbewahren

@@ -1,0 +1,7 @@
+{"_comment": "synthetic, not recorded. Dieselbe Stunde 701002 wie in rest_timetable_entries.json, jetzt ausdruecklich REGULAR (Entfall zurueckgenommen).",
+ "days": [
+  {"date": "2026-10-14", "gridEntries": [
+   {"ids": [701002], "duration": {"start": "2026-10-14T08:55", "end": "2026-10-14T09:45"}, "type": "NORMAL_TEACHING_PERIOD", "status": "REGULAR",
+    "position2": [{"current": {"type": "SUBJECT", "shortName": "D", "longName": "Deutsch"}}]}
+  ]}
+ ], "errors": []}

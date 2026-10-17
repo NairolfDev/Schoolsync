@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "schulsync"
+version = "0.1.0"
+description = "SchulSync: synchronisiert Eduvidual und WebUntis nach Google Kalender und Google Tasks (regelbasiert, ohne KI)"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = [
+    "google-api-python-client>=2.100",
+    "google-auth>=2.23",
+    "google-auth-httplib2>=0.2",
+    "google-auth-oauthlib>=1.1",
+    "httplib2>=0.22",
+    "oauthlib>=3.2",
+    "requests>=2.31",
+    "tzdata>=2024.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+schulsync = "schulsync.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+addopts = "-q"

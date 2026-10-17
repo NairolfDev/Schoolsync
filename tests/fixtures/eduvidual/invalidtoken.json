@@ -1,0 +1,5 @@
+{
+  "exception": "moodle_exception",
+  "errorcode": "invalidtoken",
+  "message": "Ungültiges Token - Token nicht gefunden"
+}

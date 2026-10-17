@@ -1,0 +1,4 @@
+{"jsonrpc": "2.0", "id": "SchulSync", "result": [
+  {"id": 11, "name": "2025/2026", "startDate": 20250901, "endDate": 20260705},
+  {"id": 12, "name": "2026/2027", "startDate": 20260907, "endDate": 20270704}
+]}

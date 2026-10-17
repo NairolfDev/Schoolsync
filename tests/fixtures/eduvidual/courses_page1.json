@@ -1,0 +1,45 @@
+{
+  "courses": [
+    {
+      "id": 7001,
+      "fullname": "Softwareentwicklung 4AHITN 2026/27",
+      "shortname": "SEW-4AHITN",
+      "idnumber": "",
+      "visible": 1,
+      "summary": "",
+      "summaryformat": 1,
+      "format": "topics",
+      "showgrades": true,
+      "lang": "",
+      "enablecompletion": true,
+      "category": 3,
+      "progress": null,
+      "startdate": 1788732000,
+      "enddate": 0,
+      "isfavourite": false,
+      "hidden": false,
+      "viewurl": "https://www.eduvidual.at/course/view.php?id=7001"
+    },
+    {
+      "id": 7002,
+      "fullname": "Mathematik 4AHITN 2026/27",
+      "shortname": "M-4AHITN",
+      "idnumber": "",
+      "visible": 1,
+      "summary": "",
+      "summaryformat": 1,
+      "format": "topics",
+      "showgrades": true,
+      "lang": "",
+      "enablecompletion": true,
+      "category": 3,
+      "progress": null,
+      "startdate": 1788732000,
+      "enddate": 0,
+      "isfavourite": false,
+      "hidden": false,
+      "viewurl": "https://www.eduvidual.at/course/view.php?id=7002"
+    }
+  ],
+  "nextoffset": 2
+}

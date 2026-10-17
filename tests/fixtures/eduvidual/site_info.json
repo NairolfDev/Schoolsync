@@ -1,0 +1,30 @@
+{
+  "sitename": "eduvidual.at",
+  "username": "max.mustermann",
+  "firstname": "Max",
+  "lastname": "Mustermann",
+  "fullname": "Max Mustermann",
+  "lang": "de",
+  "userid": 90210,
+  "siteurl": "https://www.eduvidual.at",
+  "functions": [
+    {
+      "name": "core_webservice_get_site_info",
+      "version": "2024100700"
+    },
+    {
+      "name": "core_course_get_enrolled_courses_by_timeline_classification",
+      "version": "2024100700"
+    },
+    {
+      "name": "mod_assign_get_assignments",
+      "version": "2024100700"
+    },
+    {
+      "name": "core_calendar_get_calendar_monthly_view",
+      "version": "2024100700"
+    }
+  ],
+  "release": "4.5.2 (Build: 20250314)",
+  "version": "2024100702"
+}
