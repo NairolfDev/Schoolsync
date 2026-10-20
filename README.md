@@ -419,7 +419,7 @@ Fehler **wenige Male mit wachsender Wartezeit** (Standard: 4 Versuche, 15/60/180
 
 | Quelle / Art | Google Kalender „Schule“ | Google Tasks „Schule“ | Vorlauf |
 |---|---|---|---|
-| Eduvidual-Aufgabe / Abgabe | „Abgabe: Titel“ zur Frist | „Bearbeiten: Titel“ (wird beim Abgeben in Eduvidual **automatisch abgehakt**) | Aufgabendatum **3 Kalendertage** vor der Frist |
+| Eduvidual-Aufgabe / Abgabe | **kein Kalendereintrag** (nur als Task; wer beides will: `assignment_calendar = true`) | „Bearbeiten: Titel“ (wird beim Abgeben in Eduvidual **automatisch abgehakt**) | Aufgabendatum **1 Kalendertag** vor der Frist (die echte Frist steht im Text) |
 | WebUntis-Hausaufgabe | „Abgabe: Titel“ am Abgabetermin | „Bearbeiten: Titel“ | **3 Kalendertage** vorher |
 | Prüfung / Schularbeit | Prüfungstermin mit Start und Ende (Art laut Quelle, z. B. „Schularbeit: …“, sonst „Prüfung: …“) | „Lernen: Titel“ | **7 Kalendertage** vorher |
 | Unterrichtsentfall | „Entfall: Titel“ mit exakter Start- und Endzeit | keine Aufgabe | – |

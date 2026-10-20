@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import timedelta
 
-from schulsync.config import Config, GoogleConfig
+from schulsync.config import Config, GoogleConfig, RulesConfig
 from schulsync.google_types import make_event_id
 from schulsync.models import Action, EventState, ItemStatus, ItemTime, Severity, TaskState
 from schulsync.sync import SyncEngine
@@ -20,7 +20,7 @@ from tests.support.fake_google import FakeGoogle
 
 
 def cfg_with(calendar_id: str = "cal-1", tasklist_id: str = "list-1") -> Config:
-    return Config(google=GoogleConfig(calendar_id=calendar_id, tasklist_id=tasklist_id))
+    return Config(google=GoogleConfig(calendar_id=calendar_id, tasklist_id=tasklist_id), rules=RulesConfig(**S.LEGACY_RULES))
 
 
 def eid(item, gen: int = 0) -> str:
@@ -66,7 +66,7 @@ class TestTargetIdentity:
         assert rig.st(a).event_gen == 0 and rig.st(a).event_state == EventState.ACTIVE
 
     def test_unconfigured_ids_are_ignored_like_before(self):
-        rig = Rig(cfg=Config())  # the engine tests of old: ids empty in the configuration
+        rig = Rig(cfg=Config(rules=RulesConfig(**S.LEGACY_RULES)))  # the engine tests of old: ids empty in the configuration
         rig.sync(S.assignment())
         assert rig.store.get_meta("target.calendar_id") is None
         assert rig.engine().reset_targets_if_changed(NOW) is False
@@ -74,7 +74,7 @@ class TestTargetIdentity:
     def test_a_database_from_before_this_change_learns_the_ids_at_the_first_run_without_a_reset(self):
         """No stored ids but items already linked to Google: the old targets are unknowable, so nothing is reset; the
         configuration the user has been running with is taken as the ids (even if nothing has to be written)."""
-        rig = Rig(cfg=Config())
+        rig = Rig(cfg=Config(rules=RulesConfig(**S.LEGACY_RULES)))
         a = S.assignment()
         rig.sync(a)
         linked = rig.st(a)

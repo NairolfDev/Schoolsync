@@ -273,6 +273,7 @@ _ACTION_NAME = {
     m.Action.RESTORE: "Wiederherstellen",
     m.Action.SKIP: "Übersprungen",
     m.Action.COMPLETE: "Abgehakt (in Eduvidual abgegeben)",
+    m.Action.REMOVE_EVENT: "Kalendertermin entfernen (nur noch als Task)",
 }
 _MODE_NAME = {m.RunMode.AUTO: "Automatisch", m.RunMode.MANUAL: "Manuell", m.RunMode.PREVIEW: "Vorschau"}
 _SKIP_REASONS = {

@@ -196,7 +196,7 @@ def all_logs(paths: Paths) -> str:
 
 def test_version_and_help_are_german(env, io):
     assert main(["--version"], env=env) == 0
-    assert "SchulSync 1.1.0" in io.out
+    assert "SchulSync 1.1.1" in io.out
     assert main(["--help"], env=env) == 0
     for word in ("Aufruf:", "Befehle:", "Optionen:", "setup", "run", "preview", "check", "status", "restore", "report", "autostart", "--home"):
         assert word in io.out
@@ -1211,11 +1211,11 @@ def test_run_and_preview_through_the_real_runner(env, io, paths, config_file, no
     assert main(["preview"], env=env) == 0
     assert google.write_log == [] and opened == [paths.reports / "vorschau.html"]
     assert main(["run", "--force"], env=env) == 0
-    assert len(google.events) == 1 and len(google.open_tasks) == 1
+    assert len(google.events) == 0 and len(google.open_tasks) == 1  # Eduvidual assignments: task only
     io.lines.clear()
     assert main(["run", "--auto"], env=env) == 0  # same day: quiet
     assert io.lines == []
-    assert len(google.events) == 1
+    assert len(google.events) == 0 and len(google.open_tasks) == 1
 
 
 # --------------------------------------------------------------------------- audit: the real lock, and the flags together

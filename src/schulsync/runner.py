@@ -117,6 +117,8 @@ _ACTION_DE = {
     "adopt": "Vorhandenen Eintrag übernehmen",
     "restore": "Wiederherstellen",
     "skip": "Überspringen",
+    "complete": "Abhaken (in Eduvidual abgegeben)",
+    "remove_event": "Kalendertermin entfernen (nur noch als Task)",
 }
 _TARGET_DE = {"calendar": "Kalender", "tasks": "Aufgabenliste"}
 _STATUS_DE = {

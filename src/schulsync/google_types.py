@@ -59,6 +59,9 @@ class GoogleGateway(Protocol):
 
     def patch_event(self, event_id: str, body: dict[str, Any]) -> dict[str, Any]: ...
 
+    def delete_event(self, event_id: str) -> None:
+        """Idempotent: 404/410 gilt als erledigt."""
+
     def find_events_by_uid(self, uid: str) -> list[dict[str, Any]]:
         """Abgleich per privateExtendedProperty (inkl. gelöschter, soweit die API sie liefert)."""
 

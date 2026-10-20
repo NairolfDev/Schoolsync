@@ -78,6 +78,7 @@ class Action(StrEnum):
     REACTIVATE = "reactivate"
     REMOVE_TASK = "remove_task"  # nur offene Task bei Absage
     COMPLETE = "complete"  # Task abgehakt, weil in Eduvidual abgegeben
+    REMOVE_EVENT = "remove_event"  # Kalendertermin gelöscht (Eduvidual-Aufgaben sind nur Tasks)
     ADOPT = "adopt"  # vorhandenen Google-Eintrag per Projektkennung übernommen
     RESTORE = "restore"  # ausdrückliche Wiederherstellung
     SKIP = "skip"

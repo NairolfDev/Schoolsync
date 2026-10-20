@@ -53,7 +53,7 @@ class Stack:
             eduvidual=EduvidualConfig(username="max.mustermann", method="webservice"),
             webuntis=WebUntisConfig(username="beispiel.max"),
             google=GoogleConfig(calendar_id="cal-id", tasklist_id="list-id"),
-            rules=RulesConfig(window_days=21),
+            rules=RulesConfig(window_days=21, assignment_lead_days=3, assignment_calendar=True),
         )
         self.secrets = MemorySecretStore({factories.SECRET_EDUVIDUAL: EDU_PASSWORD, factories.SECRET_WEBUNTIS: WU_PASSWORD})
 

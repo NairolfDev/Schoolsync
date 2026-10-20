@@ -61,10 +61,10 @@ def store():
 
 def test_schema_created_and_migration_idempotent(db_path):
     with StateStore(db_path) as s:
-        assert s.schema_version == SCHEMA_VERSION == 3  # v2 (H6): several report fingerprints per day, see test_harden_state.py
+        assert s.schema_version == SCHEMA_VERSION == 4  # v2 (H6): several report fingerprints per day, see test_harden_state.py
         s.upsert(make_state())
     with StateStore(db_path) as s:  # reopen: no re-migration, data intact
-        assert s.schema_version == 3
+        assert s.schema_version == 4
         assert s.get(make_item().uid) is not None
     con = sqlite3.connect(db_path)
     tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}

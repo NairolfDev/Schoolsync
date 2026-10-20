@@ -11,7 +11,7 @@ from datetime import date
 import pytest
 
 from schulsync import runner
-from schulsync.config import Config, GoogleConfig
+from schulsync.config import Config, GoogleConfig, RulesConfig
 from schulsync.errors import ConfigError, ErrorInfo
 from schulsync.google_types import make_event_id
 from schulsync.logging_setup import prune_logs
@@ -26,7 +26,7 @@ AUTO, MANUAL, PREVIEW = RunMode.AUTO, RunMode.MANUAL, RunMode.PREVIEW
 
 
 def cfg_with(calendar_id: str = "cal-1", tasklist_id: str = "list-1") -> Config:
-    return Config(google=GoogleConfig(calendar_id=calendar_id, tasklist_id=tasklist_id))
+    return Config(google=GoogleConfig(calendar_id=calendar_id, tasklist_id=tasklist_id), rules=RulesConfig(**S.LEGACY_RULES))
 
 
 def eid(item, gen: int = 0) -> str:

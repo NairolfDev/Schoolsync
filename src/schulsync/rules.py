@@ -55,6 +55,7 @@ class EventAction(StrEnum):
     CREATE = "create"
     UPDATE = "update"
     SKIP = "skip"
+    DELETE = "delete"  # remove our calendar entry (assignments are tasks only)
 
 
 class TaskAction(StrEnum):
@@ -337,6 +338,10 @@ def build_desired_task(item: SourceItem, cfg: RulesConfig, due: date) -> Desired
 def _plan_event(state: ItemState, now: datetime, cfg: RulesConfig) -> EventPlan:
     """DESIGN 4.1."""
     item, cancelled = state.item, state.cancelled
+    if item.kind == Kind.ASSIGNMENT and not cfg.assignment_calendar:  # Eduvidual-Aufgaben: nur Task
+        if state.event_state == EventState.ACTIVE and state.event_id:
+            return EventPlan(EventAction.DELETE, Action.REMOVE_EVENT, reason="tasks_only")
+        return EventPlan(EventAction.SKIP, reason="no_event_for_kind")
     if state.event_state == EventState.USER_DELETED:
         return EventPlan(EventAction.SKIP, reason="user_deleted")
     if state.event_state == EventState.NONE:

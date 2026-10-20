@@ -145,6 +145,7 @@ _COUNTER_OF = {
     Action.REMOVE_TASK: "cancelled",
     Action.REACTIVATE: "reactivated",
     Action.COMPLETE: "updated",
+    Action.REMOVE_EVENT: "cancelled",
 }
 
 
@@ -928,14 +929,31 @@ class SyncEngine:
             self._unchanged(st, Target.CALENDAR)
             return True
         if plan.action == EventAction.SKIP:
-            self._skipped(st, Target.CALENDAR, plan.reason)
+            if plan.reason != "no_event_for_kind":  # a kind without calendar entries is not a "skipped entry"
+                self._skipped(st, Target.CALENDAR, plan.reason)
             return True
         if not self._ready(Target.CALENDAR):
             return self._defer(st, Target.CALENDAR, plan.change)
         try:
+            if plan.action == EventAction.DELETE:
+                return self._delete_event(st)
             return self._create_event(st, plan) if plan.action == EventAction.CREATE else self._update_event(st, plan)
         except SchulSyncError as exc:
             return self._fail(st, Target.CALENDAR, plan.change, exc)
+
+    def _delete_event(self, st: ItemState) -> bool:
+        """Eduvidual assignments are tasks only: remove the calendar entry SchulSync created earlier. Only an entry that carries
+        our project marker for this very item is deleted; a foreign or already deleted one is left alone."""
+        assert st.event_id is not None
+        rec = self._gateway.get_event(st.event_id)  # type: ignore[union-attr]
+        mine = rec is not None and not event_is_deleted(rec) and event_private_props(rec).get(PROP_UID) == st.uid
+        if mine:
+            self._gateway.delete_event(st.event_id)  # type: ignore[union-attr]
+        st.event_state, st.event_id, st.event_applied_hash, st.applied_cancelled = EventState.NONE, None, None, False
+        self._save(st)
+        if mine:
+            self._applied(st, Target.CALENDAR, Action.REMOVE_EVENT, "Kalendertermin entfernt (Eduvidual-Aufgaben stehen nur in Google Tasks).")
+        return True
 
     def _create_event(self, st: ItemState, plan: EventPlan) -> bool:
         d = plan.desired

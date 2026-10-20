@@ -141,7 +141,13 @@ _V2 = (
 # Append-only: index i migrates user_version i -> i + 1.
 _V3 = ("ALTER TABLE items ADD COLUMN task_attempt INTEGER",)
 
-_MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3)
+# v4: Eduvidual assignments became tasks only (due = deadline - 1 day): re-check their calendar entry (delete) and open task (new date).
+_V4 = (
+    "UPDATE items SET dirty = 1, task_base_deadline = CASE WHEN task_state = 'open' THEN 'unknown' ELSE task_base_deadline END "
+    "WHERE kind = 'assignment' AND (event_state = 'active' OR task_state = 'open')",
+)
+
+_MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3, _V4)
 SCHEMA_VERSION = len(_MIGRATIONS)
 
 _LAST_FETCH_KEY = "last_complete_fetch."  # + source value; survives prune_old

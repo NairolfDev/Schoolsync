@@ -422,6 +422,16 @@ class FakeGoogle:
 
         return self._call("patch_event", run)
 
+    def delete_event(self, event_id: str) -> None:
+        def run():
+            st = self._store()
+            rec = st.live.pop(event_id, None)
+            if rec is not None:  # Google keeps the id reserved; a second delete / unknown id is an accepted no-op
+                st.deleted[event_id] = (rec.get("extendedProperties") or {}).get("private", {}).get(PROP_UID)
+            self._log("delete_event", event_id, None)
+
+        self._call("delete_event", run)
+
     def find_events_by_uid(self, uid: str) -> list[dict[str, Any]]:
         def run():
             st = self._store()

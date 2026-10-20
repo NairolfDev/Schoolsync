@@ -460,6 +460,15 @@ class RealGoogleGateway:
             missing_ok=True,
         )
 
+    def delete_event(self, event_id: str) -> None:
+        self._require_event_target()
+        call_api(
+            self._calendar.events().delete(calendarId=self.calendar_id, eventId=event_id),
+            op="Termin löschen",
+            retries=self.read_retries,
+            missing_ok=True,
+        )
+
     def insert_event(self, body: dict[str, Any]) -> dict[str, Any]:
         self._require_event_target()
         if not body.get("id"):

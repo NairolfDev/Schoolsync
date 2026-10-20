@@ -15,7 +15,7 @@ from datetime import date
 import pytest
 
 from schulsync import runner
-from schulsync.config import Config, Paths, ReportConfig, RetryConfig
+from schulsync.config import Config, Paths, ReportConfig, RetryConfig, RulesConfig
 from schulsync.errors import (
     AuthError,
     ConfigError,
@@ -58,7 +58,7 @@ def cfg(**sections) -> Config:
 
 
 def retry_cfg(**kw) -> Config:
-    return Config(retry=replace(RetryConfig(), **kw))
+    return Config(retry=replace(RetryConfig(), **kw), rules=RulesConfig(**S.LEGACY_RULES))
 
 
 def eid(item, gen: int = 0) -> str:
@@ -224,7 +224,7 @@ class TestDayGate:
         out = e.run()
         assert out.report.status == OverallStatus.SUCCESS and e.fetch_calls(WU) == 0
         assert sources(out, WU).status == SourceStatus.DISABLED and sources(out, EDU).status == SourceStatus.SUCCESS
-        assert len(e.google.events) == 1
+        assert len(e.google.events) == 0 and len(e.google.open_tasks) == 1  # assignment: task only (WebUntis is off)
 
 
 # ====================================================================================== retries, auth, factories

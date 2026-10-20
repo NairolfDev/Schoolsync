@@ -112,6 +112,12 @@ class DryRunGateway:
         self._plan("insert_event", event_id, body)
         return copy.deepcopy(rec)
 
+    def delete_event(self, event_id: str) -> None:
+        base = self.get_event(event_id)
+        if base is not None:
+            self._events[event_id] = {"id": event_id, "status": "cancelled"}
+        self._plan("delete_event", event_id, None)
+
     def patch_event(self, event_id: str, body: dict[str, Any]) -> dict[str, Any]:
         base = self.get_event(event_id)
         if base is not None and event_is_deleted(base):
