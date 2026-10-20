@@ -79,7 +79,7 @@ Du brauchst weder Python noch Git.
 2. **Doppelklick.** Windows zeigt eventuell „Der Computer wurde durch Windows geschützt“ (die Datei ist nicht signiert): **Weitere Informationen**,
    dann **Trotzdem ausführen**. Manche Virenscanner melden bei Programmen dieser Art Fehlalarme; den Quellcode kannst du hier selbst prüfen und die Datei selbst bauen
    (Abschnitt 16).
-3. Das Fenster (es führt `schulsync install` aus, das du auch selbst eingeben kannst) installiert SchulSync nach `%LOCALAPPDATA%\Programs\SchulSync`, trägt den Ordner in deinen PATH ein (ohne Adminrechte) und fragt, ob
+3. Das Fenster (es führt `schulsync install` aus, das du auch selbst eingeben kannst) installiert SchulSync nach `%LOCALAPPDATA%\Programs\SchulSync`, trägt den Ordner in deinen PATH ein (ohne Adminrechte; bei jedem Start der installierten .exe wird das bei Bedarf automatisch nachgeholt) und fragt, ob
    du gleich einrichten willst (Abschnitt 6). Danach in einem **neuen** PowerShell-Fenster: `schulsync --help`.
 4. Die Google-Client-Datei (Abschnitt 4.4) legst du in `%LOCALAPPDATA%\Programs\SchulSync` (neben die `schulsync.exe`); `schulsync setup --google` findet sie dort.
 
@@ -419,7 +419,7 @@ Fehler **wenige Male mit wachsender Wartezeit** (Standard: 4 Versuche, 15/60/180
 
 | Quelle / Art | Google Kalender „Schule“ | Google Tasks „Schule“ | Vorlauf |
 |---|---|---|---|
-| Eduvidual-Aufgabe / Abgabe | **kein Kalendereintrag** (nur als Task; wer beides will: `assignment_calendar = true`) | „Bearbeiten: Titel“ (wird beim Abgeben in Eduvidual **automatisch abgehakt**) | Aufgabendatum **1 Kalendertag** vor der Frist (die echte Frist steht im Text) |
+| Eduvidual-Aufgabe / Abgabe | **kein Kalendereintrag** (nur als Task; wer beides will: `assignment_calendar = true`) | „Bearbeiten: Titel“ (wird beim Abgeben in Eduvidual **automatisch abgehakt**) | Aufgabendatum = **Datum von (Frist minus 6 Stunden)**, z. B. Frist Do 22.10. 18:00 gibt Do 22.10.; Frist 05:00 gibt den Vortag (die echte Frist steht im Text) |
 | WebUntis-Hausaufgabe | „Abgabe: Titel“ am Abgabetermin | „Bearbeiten: Titel“ | **3 Kalendertage** vorher |
 | Prüfung / Schularbeit | Prüfungstermin mit Start und Ende (Art laut Quelle, z. B. „Schularbeit: …“, sonst „Prüfung: …“) | „Lernen: Titel“ | **7 Kalendertage** vorher |
 | Unterrichtsentfall | „Entfall: Titel“ mit exakter Start- und Endzeit | keine Aufgabe | – |
@@ -438,7 +438,8 @@ Nicht übernommen werden Supplierungen, reine Lehrkraft- oder Raumänderungen un
   nur eine echte Änderung der Frist rechnet neu.
 - **Uhrzeiten:** Ein Datum ohne Uhrzeit ergibt einen **ganztägigen** Termin. Eine Frist mit Uhrzeit wird als **einminütige Markierung** dargestellt (die Minute ist nur Darstellung, keine
   Fristverlängerung). Ist bei einer Prüfung nur der Start bekannt, steht „Endzeit unbekannt“ im Eintrag. Einträge **ohne Datum** werden übersprungen und im Bericht genannt.
-- **Erledigt bleibt erledigt.** Eine abgehakte Aufgabe wird nie wieder geöffnet, zurückgesetzt oder verändert, auch wenn sich der Schultermin ändert.
+- **Erledigt bleibt erledigt.** Eine abgehakte Aufgabe wird nie von SchulSync wieder geöffnet, zurückgesetzt oder verändert, auch wenn sich der Schultermin ändert.
+  Öffnest **du** sie in Google wieder (Haken entfernen), gilt sie wieder als offen: Beim nächsten Lauf mit einer Änderung bekommt sie das aktuelle Datum und den aktuellen Text.
 - **Automatisch abgehakt wird nur bei Eduvidual:** Meldet Eduvidual die Abgabe als **eingereicht** („submitted“), wird die offene Aufgabe abgehakt. Ein Entwurf zählt nicht.
   Ist der Abgabestatus nicht lesbar, ändert sich nichts. Wird die Abgabe zur **Überarbeitung zurückgegeben** (neuer Versuch), entsteht eine **zweite** Aufgabe; der Kalendertermin bleibt derselbe.
   Ist die Abgabe schon eingereicht, wenn SchulSync sie zum ersten Mal sieht, wird keine Aufgabe angelegt.

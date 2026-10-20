@@ -1168,6 +1168,7 @@ def entry() -> int:
     """Einstieg der fertigen schulsync.exe. Ohne Befehl (Doppelklick) wird installiert; im Autostart verschwindet das Fenster."""
     argv = sys.argv[1:]
     frozen.remove_old_exe()
+    frozen.ensure_path()
     auto = "run" in argv and "--auto" in argv
     if auto:
         frozen.hide_console()

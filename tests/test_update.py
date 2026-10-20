@@ -152,3 +152,19 @@ def test_the_installed_exe_autostart_command_is_the_exe_itself(monkeypatch, tmp_
     monkeypatch.setattr(frozen, "is_frozen", lambda: True)
     monkeypatch.setattr(frozen, "exe_path", lambda: exe)
     assert autostart.default_command() == (str(exe), "run --auto")
+
+
+def test_the_installed_exe_repairs_a_missing_path_entry_on_every_start(monkeypatch, tmp_path):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    folder = tmp_path / "Programs" / "SchulSync"
+    folder.mkdir(parents=True)
+    added = []
+    monkeypatch.setattr(frozen, "add_to_user_path", lambda p: added.append(p) or True)
+    monkeypatch.setattr(frozen, "is_frozen", lambda: True)
+    monkeypatch.setattr(frozen, "exe_path", lambda: folder.resolve() / "schulsync.exe")
+    frozen.ensure_path()
+    assert added == [folder]
+    added.clear()
+    monkeypatch.setattr(frozen, "exe_path", lambda: tmp_path / "Downloads" / "SchulSync-Setup.exe")  # not installed: nothing
+    frozen.ensure_path()
+    assert added == []

@@ -196,7 +196,7 @@ def all_logs(paths: Paths) -> str:
 
 def test_version_and_help_are_german(env, io):
     assert main(["--version"], env=env) == 0
-    assert "SchulSync 1.1.1" in io.out
+    assert "SchulSync 1.1.2" in io.out
     assert main(["--help"], env=env) == 0
     for word in ("Aufruf:", "Befehle:", "Optionen:", "setup", "run", "preview", "check", "status", "restore", "report", "autostart", "--home"):
         assert word in io.out

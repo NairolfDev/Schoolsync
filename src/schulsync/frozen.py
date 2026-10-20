@@ -140,3 +140,12 @@ def uninstall(say: Callable[[str], None], *, data_dir: Path | None = None) -> No
     say("Gelöscht wird nach dem Beenden dieses Fensters: " + ", ".join(str(f) for f in folders))
     if data_dir is None:
         say("Deine Einstellungen, Passwörter und Daten bleiben erhalten (deinstallieren mit Daten: 'schulsync uninstall --data').")
+
+
+def ensure_path() -> None:
+    """Läuft die .exe aus dem Programmordner, sorgt sie dafür, dass der Ordner im Benutzer-PATH steht (still, ohne Adminrechte)."""
+    try:
+        if is_frozen() and exe_path().parent == install_dir().resolve():
+            add_to_user_path(install_dir())
+    except OSError:
+        pass

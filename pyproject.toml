@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "schulsync"
-version = "1.1.1"
+version = "1.1.2"
 description = "SchulSync: synchronisiert Eduvidual und WebUntis nach Google Kalender und Google Tasks (regelbasiert, ohne KI)"
 readme = "README.md"
 license = "GPL-3.0-or-later"

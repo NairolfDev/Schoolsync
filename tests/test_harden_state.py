@@ -146,22 +146,22 @@ def _build_v1_database(path: Path) -> str:
     return item.uid
 
 
-def test_schema_version_is_4():
-    assert SCHEMA_VERSION == 4  # v3: items.task_attempt (Eduvidual resubmission)
+def test_schema_version_is_5():
+    assert SCHEMA_VERSION == 5  # v3: items.task_attempt (Eduvidual resubmission)
 
 
 def test_v1_database_file_is_migrated_and_keeps_its_rows(tmp_path):
     db = tmp_path / "state.sqlite3"
     uid = _build_v1_database(db)
     with StateStore(db) as s:
-        assert s.schema_version == 4
+        assert s.schema_version == 5
         assert s.get(uid) is not None and s.get_meta("k") == "v"  # nothing else was touched
         assert s.report_opened_fingerprint(date(2026, 10, 14)) == "alt-fp"  # old row semantics survive
         assert s.report_opened_fingerprints(date(2026, 10, 13)) == {"gestern-fp"}
         s.mark_report_opened(date(2026, 10, 14), "zweiter-fp", T0)  # what v1 could not hold
         assert s.report_opened_fingerprints(date(2026, 10, 14)) == {"alt-fp", "zweiter-fp"}
     with StateStore(db) as s:  # reopening is a no-op
-        assert s.schema_version == 4 and s.report_opened_fingerprints(date(2026, 10, 14)) == {"alt-fp", "zweiter-fp"}
+        assert s.schema_version == 5 and s.report_opened_fingerprints(date(2026, 10, 14)) == {"alt-fp", "zweiter-fp"}
     con = sqlite3.connect(db)
     tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     con.close()
@@ -173,7 +173,7 @@ def test_v1_migration_survives_two_processes_opening_the_file_at_once(tmp_path):
     _build_v1_database(db)
     first, second = StateStore(db), StateStore(db)  # the second one finds a current schema and must not migrate again
     try:
-        assert first.schema_version == second.schema_version == 4
+        assert first.schema_version == second.schema_version == 5
         assert second.report_opened_fingerprint(date(2026, 10, 14)) == "alt-fp"
     finally:
         first.close()

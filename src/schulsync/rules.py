@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from datetime import date, datetime
+from datetime import date, datetime, time
 from enum import StrEnum
 from urllib.parse import urlsplit, urlunsplit
 
@@ -36,7 +36,7 @@ from .models import (
     SourceItem,
     TaskState,
 )
-from .timeutil import UTC, Window, add_real_minutes, minus_calendar_days, plus_calendar_days, to_vienna, today_vienna
+from .timeutil import UTC, Window, add_real_minutes, make_local, minus_calendar_days, plus_calendar_days, to_vienna, today_vienna
 
 # Copied school descriptions are clipped so that the personal notes keep room (limits of the Google
 # APIs are applied again in textblocks.merge_description).
@@ -158,6 +158,18 @@ def new_item_verdict(item: SourceItem, now: datetime, window: Window) -> tuple[b
     if not _in_window(item, window):
         return False, "outside_window"
     return True, "ok"
+
+
+def task_start_date(item: SourceItem, cfg: RulesConfig) -> date:
+    """Task date (Google Tasks has a date only). Eduvidual assignments: the DATE of (deadline - assignment_lead_hours), e.g.
+    deadline 22.10. 18:00 -> 12:00 -> 22.10.; a date-only deadline counts as 23:59. Everything else: deadline date minus lead days."""
+    if item.kind == Kind.ASSIGNMENT and cfg.assignment_lead_hours:
+        d = deadline_of(item)
+        dt = to_vienna(d) if isinstance(d, datetime) else make_local(d, time(23, 59))
+        return add_real_minutes(dt, -60 * cfg.assignment_lead_hours).date()
+    lead = lead_days(item.kind, cfg)
+    assert lead is not None
+    return minus_calendar_days(item.when.start_date, lead)
 
 
 def compute_task_due(deadline: datetime | date, lead: int, today: date) -> date:
@@ -317,8 +329,10 @@ def build_desired_task(item: SourceItem, cfg: RulesConfig, due: date) -> Desired
         raise ValueError(f"no task for kind {item.kind.value}")
     exam = item.kind == Kind.EXAM
     title = ("Lernen: " if exam else "Bearbeiten: ") + _title(item)
-    work_start = minus_calendar_days(item.when.start_date, lead)
-    if lead == 0:
+    work_start = task_start_date(item, cfg)
+    if item.kind == Kind.ASSIGNMENT and cfg.assignment_lead_hours:
+        rel = f"{cfg.assignment_lead_hours} Stunden vor der Frist"
+    elif lead == 0:
         rel = "am Tag des Termins" if exam else "am Tag der Frist"
     else:
         rel = f"{'1 Tag' if lead == 1 else f'{lead} Tage'} vor {'dem Termin' if exam else 'der Frist'}"
@@ -386,7 +400,7 @@ def _plan_task(state: ItemState, now: datetime, cfg: RulesConfig) -> TaskPlan:
     today = today_vienna(now)
     past = is_fully_past(item, now)
     base = deadline_iso(item)
-    due_new = compute_task_due(deadline_of(item), lead, today)
+    due_new = max(task_start_date(item, cfg), today)
 
     def create(reason: str) -> TaskPlan:
         return TaskPlan(

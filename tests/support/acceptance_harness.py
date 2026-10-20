@@ -124,7 +124,7 @@ def make_config(**sections: Mapping[str, Any]) -> Config:
         eduvidual=EduvidualConfig(username="schueler.beispiel"),
         webuntis=WebUntisConfig(username="schueler.beispiel"),
         google=GoogleConfig(calendar_id="cal-schule", tasklist_id="list-schule"),
-        rules=RulesConfig(window_days=21, assignment_lead_days=3, assignment_calendar=True),  # the edge tests are written for a 21-day window
+        rules=RulesConfig(window_days=21, assignment_lead_days=3, assignment_lead_hours=0, assignment_calendar=True),  # the edge tests are written for a 21-day window
     )
     return configure(cfg, **sections)
 

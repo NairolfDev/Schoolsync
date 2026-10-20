@@ -1075,7 +1075,18 @@ class SyncEngine:
 
     # ---- tasks
 
+    def _reopened(self, st: ItemState) -> None:
+        """A finished task that the user ticked off and later UNticked is an open task again (its date / text follow the school
+        again). Only when the list is known; a task that stays completed, hidden or deleted is left alone."""
+        if st.task_state != TaskState.DONE or not st.task_id or self._blind() or not self._ready(Target.TASKS):
+            return
+        rec = self._task_in_list(st.task_id)
+        if rec is not None and not task_is_completed(rec) and not task_is_hidden(rec) and not task_is_deleted(rec):
+            st.task_state = TaskState.OPEN
+            self._save(st)
+
     def _do_task(self, st: ItemState) -> bool:
+        self._reopened(st)
         plan = rules.plan_item(st, self._now, self.cfg.rules).task  # type: ignore[arg-type]
         if plan.action == TaskAction.NONE:
             self._task_none(st, plan.reason)

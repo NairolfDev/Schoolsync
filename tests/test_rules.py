@@ -29,7 +29,7 @@ from schulsync.models import (
 from schulsync.rules import EventAction, TaskAction
 from schulsync.timeutil import UTC, VIENNA, fetch_window, local_midnight
 
-CFG = RulesConfig(assignment_lead_days=3, assignment_calendar=True)  # the 3-day / calendar behaviour; new default: see test_assignment_tasks_only.py
+CFG = RulesConfig(assignment_lead_days=3, assignment_lead_hours=0, assignment_calendar=True)  # the 3-day / calendar behaviour; new default: see test_assignment_tasks_only.py
 NOW = datetime(2026, 10, 14, 8, 0, tzinfo=VIENNA)  # Wednesday
 TODAY = NOW.date()
 

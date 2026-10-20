@@ -147,7 +147,12 @@ _V4 = (
     "WHERE kind = 'assignment' AND (event_state = 'active' OR task_state = 'open')",
 )
 
-_MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3, _V4)
+# v5: Eduvidual task date = deadline minus 6 hours: re-check every assignment task (open, finished or re-opened by the user).
+_V5 = (
+    "UPDATE items SET dirty = 1, task_base_deadline = 'unknown' WHERE kind = 'assignment' AND task_id IS NOT NULL",
+)
+
+_MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3, _V4, _V5)
 SCHEMA_VERSION = len(_MIGRATIONS)
 
 _LAST_FETCH_KEY = "last_complete_fetch."  # + source value; survives prune_old

@@ -100,7 +100,8 @@ class GoogleConfig:
 @dataclass(frozen=True)
 class RulesConfig:
     window_days: int = 31
-    assignment_lead_days: int = 1  # Eduvidual: Task-Datum = Frist minus 1 Tag
+    assignment_lead_days: int = 1  # nur wenn assignment_lead_hours = 0
+    assignment_lead_hours: int = 6  # Eduvidual-Aufgabe: Task-Datum = Datum von (Frist minus 6 Stunden); 0 = assignment_lead_days
     assignment_calendar: bool = False  # Eduvidual-Aufgaben nur als Task; true = zusätzlich Kalendertermin
     homework_lead_days: int = 3
     exam_lead_days: int = 7

@@ -28,7 +28,8 @@ tasklist_id = ""              # wird bei der Einrichtung gesetzt
 
 [rules]
 window_days = 31              # neue Termine: heute 00:00 bis heute + 31 Kalendertage 00:00 (exklusiv)
-assignment_lead_days = 1      # Eduvidual-Aufgabe: Task-Datum = Frist minus 1 Kalendertag
+assignment_lead_hours = 6     # Eduvidual-Aufgabe: Task-Datum = Datum von (Frist minus 6 Stunden)
+assignment_lead_days = 1      # nur wenn assignment_lead_hours = 0: Frist minus 1 Kalendertag
 assignment_calendar = false   # Eduvidual-Aufgaben nur als Google-Task; true = zusätzlich als Kalendertermin
 homework_lead_days = 3        # WebUntis-Hausaufgabe: Frist minus 3 Kalendertage
 exam_lead_days = 7            # Prüfung/Schularbeit: Termin minus 7 Kalendertage

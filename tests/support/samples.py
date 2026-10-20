@@ -112,4 +112,4 @@ def cancellation(
 
 
 # Eduvidual assignments were calendar entry + task 3 days before until 1.1.1; several older tests still describe that.
-LEGACY_RULES = {"assignment_lead_days": 3, "assignment_calendar": True}
+LEGACY_RULES = {"assignment_lead_days": 3, "assignment_lead_hours": 0, "assignment_calendar": True}
