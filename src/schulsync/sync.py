@@ -602,7 +602,7 @@ class SyncEngine:
         if cancelled and not st.cancelled and proof is not None:
             self._notice(Severity.INFO, "withdrawn_confirmed", proof, item)
         st.item, st.item_hash, st.cancelled, st.last_seen_at = item, new_hash, cancelled, now
-        if changed:
+        if changed or (st.task_state == TaskState.DONE and st.task_id):
             st.dirty = True
         elif not st.dirty:
             self._count_unchanged_known(st)

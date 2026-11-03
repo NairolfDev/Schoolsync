@@ -37,7 +37,7 @@ import shutil
 import sys
 import threading
 from contextlib import contextmanager
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterator
@@ -106,6 +106,20 @@ class NoConsoleError(ConfigError):
     """An interactive question was asked although no console is attached (pythonw.exe, closed stdin)."""
 
 
+def _platform_autostart():
+    if sys.platform.startswith("linux"):
+        from . import autostart_linux
+        return autostart_linux
+    return autostart_module
+
+
+def _platform_secrets(path: Path) -> SecretStore:
+    if sys.platform.startswith("linux"):
+        from .linux_secrets import SecretServiceStore
+        return SecretServiceStore(path)
+    return DpapiSecretStore(path)
+
+
 def _default_say(text: str = "") -> None:
     stream = sys.stdout
     if stream is None:
@@ -161,7 +175,7 @@ class CliEnv:
     google_services: Callable[[Any, Config], tuple[Any, Any]] = factories.build_google_services
     authorize: Callable[[str], Any] = google_auth.authorize_interactive
     open_report: Callable[[Path], bool] = default_open_report
-    autostart: Any = autostart_module  # install(paths) / remove() / status()
+    autostart: Any = field(default_factory=_platform_autostart)  # install(paths) / remove() / status()
     example_config: Path | None = None  # None: config.example.toml next to the package (repo root)
     hard_exit: Callable[[int], None] = os._exit  # what the `run` watchdog ends the process with (tests inject a recorder)
     watchdog_grace: float = WATCHDOG_GRACE_SECONDS  # seconds after retry.run_timeout_seconds before the watchdog fires
@@ -181,7 +195,7 @@ class _Session:
             # somewhere else on every logon.
             paths = Paths(Path(os.path.abspath(paths.home)))
         self.paths = paths
-        self.secrets: SecretStore = env.secrets if env.secrets is not None else DpapiSecretStore(self.paths.secrets)
+        self.secrets: SecretStore = env.secrets if env.secrets is not None else _platform_secrets(self.paths.secrets)
         self.started = env.clock()
         self._config: Config | None = None
 
@@ -214,6 +228,10 @@ class _Session:
         return self.env.build_deps(self.paths, self.load_config(), self.secrets)
 
     def yes(self, question: str, default: bool) -> bool:
+        from . import settings
+        read_key = settings._keys()
+        if read_key is not None:
+            return settings.choose(question, ["Ja", "Nein"], [0 if default else 1], False, read_key, self.say)[0] == 0
         answer = self.env.ask(f"{question} [{'J/n' if default else 'j/N'}]: ").strip().lower()
         if answer in ("j", "ja", "y", "yes"):
             return True
@@ -289,6 +307,13 @@ def _auto_failure_report(s: _Session, info: ErrorInfo, mode: RunMode = RunMode.A
     except Exception:  # Never show a report early if the counter cannot be saved.
         log.exception("Fehlerzähler konnte nicht gespeichert werden")
         retry = {"counts": {}, "notified": []}
+    else:
+        try:
+            schedule = getattr(s.env.autostart, "schedule_retry", None)
+            if schedule is not None:
+                schedule(s.paths, datetime.fromisoformat(retry["next_retry"]))
+        except Exception:  # noqa: BLE001
+            log.exception("Wiederholungsaufgabe konnte nicht aktualisiert werden")
     day = today_vienna(now)
     text = info.message + (f" ({info.detail})" if info.detail else "")
     rep = RunReport(
@@ -403,11 +428,20 @@ def _cmd_run(s: _Session) -> int:
         try:
             pending = retry_state.read(s.paths).get("next_retry")
             if pending and s.env.clock() < datetime.fromisoformat(pending):
+                schedule = getattr(s.env.autostart, "schedule_retry", None)
+                if schedule is not None:
+                    try:
+                        schedule(s.paths, datetime.fromisoformat(pending))
+                    except OSError:
+                        log.warning("Wiederholungszeitpunkt konnte nicht eingeplant werden.")
                 return 0
         except (OSError, ValueError, TypeError):
             log.warning("Wiederholungszeitpunkt konnte nicht gelesen werden.")
     mode = RunMode.AUTO if auto else RunMode.MANUAL
     deps = s.deps()
+    schedule = getattr(s.env.autostart, "schedule_retry", None)
+    if schedule is not None:
+        deps.retry_schedule = lambda due: schedule(s.paths, due)
     _probe_state(s, deps)
     watchdog = _Watchdog(s, deps.config.retry.run_timeout_seconds + s.env.watchdog_grace, mode)
     watchdog.start()
@@ -652,7 +686,7 @@ def _check(s: _Session) -> int:
             say(f"  - {h}")
         return 1
     say("Ergebnis: Alles in Ordnung. Nächste Schritte: 'schulsync preview' zeigt, was übernommen würde; 'schulsync run' gleicht ab; "
-        "'schulsync autostart install' startet SchulSync nach jeder Windows-Anmeldung.")
+        "'schulsync autostart install' richtet automatische Läufe zu den eingestellten Uhrzeiten ein.")
     return 0
 
 
@@ -1005,7 +1039,7 @@ def _offer_autostart(s: _Session) -> None:
     if current is not None and current.ok:
         say(f"  {current.details}")
         return
-    if s.yes("SchulSync nach jeder Windows-Anmeldung automatisch starten (Autostart einrichten)?", False):
+    if s.yes("SchulSync zu den eingestellten Uhrzeiten automatisch starten (Autostart einrichten)?", False):
         result = s.env.autostart.install(s.paths)
         say(f"  {result.details}")
     else:
@@ -1032,6 +1066,11 @@ def _setup(s: _Session) -> int:
         if everything or source.value in only:
             _setup_source(s, source)
     if everything:
+        from . import settings
+        code = settings.run_setup(s.paths.config, say=s.say, ask=s.env.ask, today=today_vienna(s.env.clock()),
+                                  on_schedule_change=lambda: _update_schedule(s))
+        if code:
+            return code
         _offer_autostart(s)
     s.say()
     s.say("Die Einrichtung ist abgeschlossen. Nächste Schritte: 'schulsync check' prüft alle Zugänge, "
@@ -1042,10 +1081,16 @@ def _setup(s: _Session) -> int:
 # --------------------------------------------------------------------------- argument parser (German)
 
 def _cmd_update(s: _Session) -> int:
+    if sys.platform.startswith("linux"):
+        s.say("Unter Linux wird SchulSync über das installierte Paket oder die AppImage-Datei aktualisiert.")
+        return 1
     return updater.run_update(s.say, check_only=bool(s.args.check))
 
 
 def _cmd_install(s: _Session) -> int:
+    if sys.platform.startswith("linux"):
+        s.say("Unter Linux SchulSync per Paketverwaltung oder AppImage installieren; Autostart: 'schulsync autostart install'.")
+        return 1
     if not frozen.is_frozen():
         s.say("'install' gibt es nur in der fertigen schulsync.exe. Aus dem Quellcode: scripts\\install.ps1.")
         return 1
@@ -1057,6 +1102,9 @@ def _cmd_install(s: _Session) -> int:
 
 
 def _cmd_uninstall(s: _Session) -> int:
+    if sys.platform.startswith("linux"):
+        s.say("Unter Linux zuerst 'schulsync autostart remove' ausführen und anschließend Paket oder AppImage entfernen.")
+        return 1
     s.say("SchulSync wird entfernt: Autostart, Programm und PATH-Eintrag.")
     s.say(s.env.autostart.remove().details)
     if not frozen.is_frozen():
@@ -1065,6 +1113,24 @@ def _cmd_uninstall(s: _Session) -> int:
     data = s.paths.home if s.args.data and s.yes(f"Auch Einstellungen, Passwörter und Datenbank in {s.paths.home} unwiderruflich löschen?", False) else None
     frozen.uninstall(s.say, data_dir=data)
     return 0
+
+
+def _update_schedule(s: _Session) -> bool:
+    try:
+        status = s.env.autostart.status()
+        if status.method is None:
+            s.say("Zeitplan gespeichert. " + status.details)
+            return "unbekannt" not in status.details.lower()
+        result = s.env.autostart.install(s.paths)
+        if result.ok:
+            s.say("Autostart mit den neuen Uhrzeiten aktualisiert.")
+            return True
+        s.say("Zeitplan gespeichert, aber der Autostart konnte nicht aktualisiert werden: " + result.details)
+    except Exception as exc:
+        log.warning("Autostart konnte nach Zeitplanänderung nicht aktualisiert werden: %s", type(exc).__name__)
+        s.say("Zeitplan gespeichert, aber der Autostart konnte nicht aktualisiert werden.")
+    s.say("Bitte 'schulsync autostart install' erneut ausführen.")
+    return False
 
 
 def _cmd_settings(s: _Session) -> int:
@@ -1078,10 +1144,31 @@ def _cmd_settings(s: _Session) -> int:
         do_list=bool(s.args.list),
         sets=s.args.set,
         resets=s.args.reset,
+        on_schedule_change=lambda: _update_schedule(s),
     )
 
 
+def _cmd_google_auth_check(s: _Session) -> int:
+    from . import auth_monitor
+
+    lock = ProcessLock(s.paths.lock)
+    try:
+        if not lock.acquire(blocking=False):
+            return 0
+    except OSError:
+        log.warning('Google-Anmeldung: Prozesssperre nicht verfügbar.')
+        return 1
+    try:
+        authorize = s.env.authorize
+        if authorize is google_auth.authorize_interactive:
+            authorize = lambda client: google_auth.authorize_interactive(client, prefer_chrome=True)
+        return auth_monitor.run(s.paths, s.secrets, s.load_config(), authorize)
+    finally:
+        lock.release()
+
+
 _COMMANDS: dict[str, Callable[[_Session], int]] = {
+    "google-auth-check": _cmd_google_auth_check,
     "study-preview": _cmd_study_preview,
     "settings": _cmd_settings,
     "uninstall": _cmd_uninstall,
@@ -1163,6 +1250,8 @@ def _build_parser(say: Callable[[str], None]) -> argparse.ArgumentParser:
     p = add("run", "Tageslauf: Quellen lesen und nach Google schreiben")
     p.add_argument("--auto", action="store_true", help="Autostart-Modus: still, wenn nichts zu tun ist; Bericht im Browser nur bei Problemen")
     p.add_argument("--force", action="store_true", help="Tagesbegrenzung umgehen (manueller Start)")
+    p = add("google-auth-check", "Google-Anmeldung unabhängig vom Abgleich prüfen")
+    p.add_argument("--auto", action="store_true", help="unsichtbare Hintergrundprüfung")
     add("preview", "Vorschau: zeigt die geplanten Änderungen, schreibt nichts und verbucht keinen Erfolg")
     add("study-preview", "Lernplan anhand lokal gespeicherter Prüfungen anzeigen, ohne Google zu ändern")
     add("check", "Prüft Konfiguration, Zugangsdaten, Google-Ziele und je Quelle, welche Datenkategorien wirklich lesbar sind")
@@ -1179,7 +1268,7 @@ def _build_parser(say: Callable[[str], None]) -> argparse.ArgumentParser:
     p = add("uninstall", "Entfernt Autostart, Programm und PATH-Eintrag (Daten bleiben, außer mit --data)")
     p.add_argument("--data", action="store_true", help="auch Einstellungen, Passwörter und Datenbank löschen (mit Rückfrage)")
     add("install", "Installiert die schulsync.exe für deinen Benutzer (Programme-Ordner und PATH)")
-    p = add("autostart", "Start nach der Windows-Anmeldung einrichten, entfernen oder anzeigen")
+    p = add("autostart", "Automatische Starts einrichten, entfernen oder anzeigen")
     p.add_argument("action", choices=("install", "remove", "status"), metavar="install|remove|status", help="Aktion")
     return parser
 
@@ -1231,9 +1320,11 @@ def main(argv: list[str] | None = None, *, env: CliEnv | None = None) -> int:
 def entry() -> int:
     """Einstieg der fertigen schulsync.exe. Ohne Befehl (Doppelklick) wird installiert; im Autostart verschwindet das Fenster."""
     argv = sys.argv[1:]
+    if sys.platform.startswith("linux"):
+        return main(argv)
     frozen.remove_old_exe()
     frozen.ensure_path()
-    auto = "run" in argv and "--auto" in argv
+    auto = ("run" in argv or "google-auth-check" in argv) and "--auto" in argv
     if auto:
         frozen.hide_console()
     if not argv:

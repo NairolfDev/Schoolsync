@@ -16,6 +16,10 @@ The authorization URL printed by the console flow is not a secret (client id + s
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import sys
+import webbrowser
 from pathlib import Path
 from datetime import datetime
 from typing import Any, Protocol
@@ -133,8 +137,21 @@ def bundled_client_json() -> str | None:
     return None
 
 
+def _chrome_executable() -> str | None:
+    if sys.platform.startswith("linux"):
+        return shutil.which("google-chrome") or shutil.which("google-chrome-stable") or shutil.which("chromium") or shutil.which("chromium-browser")
+    for variable in ('LOCALAPPDATA', 'ProgramFiles', 'ProgramFiles(x86)'):
+        root = os.environ.get(variable)
+        if root:
+            candidate = Path(root) / 'Google' / 'Chrome' / 'Application' / 'chrome.exe'
+            if candidate.is_file():
+                return str(candidate)
+    return None
+
+
 def authorize_interactive(
-    client_config_json: str, *, open_browser: bool = True, port: int = 0, timeout_seconds: int | None = 600
+    client_config_json: str, *, open_browser: bool = True, port: int = 0, timeout_seconds: int | None = 600,
+    prefer_chrome: bool = False,
 ) -> Credentials:
     """One-time browser authorization via loopback redirect. `port=0` picks a free port.
 
@@ -153,6 +170,10 @@ def authorize_interactive(
             "herunterladen.",
         ) from None
     try:
+        browser_options = {}
+        if open_browser and prefer_chrome and (chrome := _chrome_executable()):
+            webbrowser.register('schulsync-chrome', None, webbrowser.BackgroundBrowser(chrome))
+            browser_options['browser'] = 'schulsync-chrome'
         creds = flow.run_local_server(
             host="localhost",
             port=port,
@@ -162,6 +183,7 @@ def authorize_interactive(
             timeout_seconds=timeout_seconds,
             access_type="offline",
             prompt="consent",
+            **browser_options,
         )
     except WSGITimeoutError:
         raise GoogleAuthError(

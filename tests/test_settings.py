@@ -160,3 +160,93 @@ def test_every_setting_maps_to_an_existing_config_key_with_matching_type_and_def
 def test_study_preview_excludes_normal_exam_task():
     text = settings.study_preview(1, 14, date(2026, 10, 30))
     assert "(13 zusätzliche)" in text
+
+
+def test_schedule_defaults_and_setting_updates_existing_autostart(paths, io, cfg_path):
+    from tests.test_cli import FakeAutostart
+    from datetime import timezone
+    auto = FakeAutostart(installed=True)
+    env = CliEnv(say=io.say, ask=io.ask, paths=paths, secrets=MemorySecretStore(), autostart=auto,
+                 clock=lambda: datetime(2026, 10, 1, 12, tzinfo=timezone.utc))
+    assert load_config(cfg_path).schedule.run_times == ("06:00", "18:00")
+    assert main(["settings", "--set", "schedule.run_times=07:30,20:15"], env=env) == 0
+    assert load_config(cfg_path).schedule.run_times == ("07:30", "20:15")
+    assert auto.calls == [("status",), ("install", paths)]
+
+
+@pytest.mark.parametrize("value", ["06:00", "06:00,06:00", "24:00,18:00", "6:00,18:00", "06:00,18:60"])
+def test_invalid_schedule_does_not_change_config(paths, io, cfg_path, value):
+    before = cfg_path.read_bytes()
+    assert run(paths, io, "--set", f"schedule.run_times={value}") == 2
+    assert cfg_path.read_bytes() == before
+
+
+def test_schedule_change_does_not_install_absent_autostart(paths, io, cfg_path):
+    from tests.test_cli import FakeAutostart
+    from datetime import timezone
+    auto = FakeAutostart(installed=False)
+    env = CliEnv(say=io.say, ask=io.ask, paths=paths, secrets=MemorySecretStore(), autostart=auto,
+                 clock=lambda: datetime(2026, 10, 1, 12, tzinfo=timezone.utc))
+    assert main(["settings", "--set", "schedule.run_times=07:00,19:00"], env=env) == 0
+    assert auto.calls == [("status",)]
+
+
+def test_schedule_update_failure_is_reported(paths, io, cfg_path):
+    from tests.test_cli import FakeAutostart
+    from datetime import timezone
+    auto = FakeAutostart(installed=True, ok=False)
+    env = CliEnv(say=io.say, ask=io.ask, paths=paths, secrets=MemorySecretStore(), autostart=auto,
+                 clock=lambda: datetime(2026, 10, 1, 12, tzinfo=timezone.utc))
+    assert main(["settings", "--set", "schedule.run_times=07:00,19:00"], env=env) == 1
+    assert "schulsync autostart install" in io.out
+
+
+def test_select_with_arrow_space_and_enter():
+    keys = iter(["down", "space", "down", "space", "enter"])
+    shown = []
+    assert settings.choose("Tage", ["0", "-1", "-2"], [0], True, lambda: next(keys), shown.append) == [0, 1, 2]
+    assert any("[x]" in line for line in shown)
+
+
+def test_individual_study_days_settings_accept_negative_and_zero(paths, io, cfg_path):
+    assert run(paths, io, "--set", "rules.study_mode=days", "--set", "rules.study_days=-1,-2,-3,-5,-7,0") == 0
+    cfg = load_config(cfg_path)
+    assert cfg.rules.study_mode == "days" and cfg.rules.study_days == (-1, -2, -3, -5, -7, 0)
+
+
+def test_settings_wizard_enter_keeps_current_values(paths, io, cfg_path):
+    before = cfg_path.read_bytes()
+    io.answers.extend([""] * len(settings.SETTINGS))
+    assert settings.run_setup(cfg_path, say=io.say, ask=io.ask, today=TODAY) == 0
+    assert cfg_path.read_bytes() == before
+
+
+def test_full_setup_runs_preferences_wizard_before_autostart(paths, io, cfg_path, monkeypatch):
+    from datetime import timezone
+    events = []
+    env = CliEnv(say=io.say, ask=io.ask, paths=paths, secrets=MemorySecretStore(),
+                 clock=lambda: datetime(2026, 10, 1, 12, tzinfo=timezone.utc))
+    monkeypatch.setattr(cli, "_setup_google", lambda s: None)
+    monkeypatch.setattr(cli, "_setup_source", lambda s, source: None)
+    monkeypatch.setattr(cli, "_offer_autostart", lambda s: events.append("autostart"))
+    monkeypatch.setattr(settings, "run_setup", lambda *a, **kw: events.append("preferences") or 0)
+    assert main(["setup"], env=env) == 0
+    assert events == ["preferences", "autostart"]
+
+
+def test_partial_setup_skips_preferences_wizard(paths, io, cfg_path, monkeypatch):
+    from datetime import timezone
+    env = CliEnv(say=io.say, ask=io.ask, paths=paths, secrets=MemorySecretStore(),
+                 clock=lambda: datetime(2026, 10, 1, 12, tzinfo=timezone.utc))
+    monkeypatch.setattr(cli, "_setup_source", lambda s, source: None)
+    monkeypatch.setattr(settings, "run_setup", lambda *a, **kw: pytest.fail("partial setup opened preferences"))
+    assert main(["setup", "--eduvidual"], env=env) == 0
+
+
+def test_yes_no_uses_arrow_keys_and_enter_when_terminal_supports_it(paths, io, monkeypatch):
+    from argparse import Namespace
+    keys = iter(["down", "enter"])
+    monkeypatch.setattr(settings, "_keys", lambda: lambda: next(keys))
+    session = cli._Session(Namespace(), CliEnv(say=io.say, ask=io.ask, paths=paths, secrets=MemorySecretStore()))
+    assert session.yes("Jetzt testen?", True) is False
+    assert not io.prompts

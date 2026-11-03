@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import subprocess
+import sys
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +31,15 @@ $n = [Windows.UI.Notifications.ToastNotification]::new($x)
 
 def toast(title: str, text: str) -> bool:
     """Zeigt eine Windows-Benachrichtigung. True, wenn PowerShell sie ohne Fehler abgesetzt hat."""
+    if sys.platform.startswith("linux"):
+        executable = shutil.which("notify-send")
+        if not executable:
+            return False
+        try:
+            done = subprocess.run([executable, title[:100], text[:250]], capture_output=True, timeout=20, check=False)
+            return done.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
     if os.name != "nt":
         return False
     env = {**os.environ, "SCHULSYNC_TOAST_TITLE": title[:100], "SCHULSYNC_TOAST_TEXT": text[:250]}

@@ -37,13 +37,13 @@ Voreingestellt ist WebUntis der **HTBLA Grieskirchen**; für eine andere Schule 
 
 **Es tut:**
 
-- Nach jeder Windows-Anmeldung und täglich um **6:00 und 18:00 Uhr** liest es Eduvidual (Aufgaben und Abgaben) und WebUntis (Hausaufgaben, Prüfungen, Schularbeiten,
+- Zweimal täglich, standardmäßig um **6:00 und 18:00 Uhr**, liest es Eduvidual (Aufgaben und Abgaben) und WebUntis (Hausaufgaben, Prüfungen, Schularbeiten,
   Unterrichtsentfälle).
 - Es trägt Fristen und Termine in den Google-Kalender „Schule“ ein und legt abhakbare Aufgaben in der Google-Tasks-Liste „Schule“ an.
 - Verschobene Fristen und Tests aktualisiert es (derselbe Termin, kein Duplikat), ein zurückgenommener Entfall wird als „Abgesagt:“ markiert.
 - **Abgegeben in Eduvidual = abgehakt in Google Tasks:** Eine in Eduvidual eingereichte Abgabe hakt die Aufgabe „Bearbeiten: …“ automatisch ab.
   Gibt die Lehrkraft sie zur Überarbeitung zurück, entsteht eine **zweite** Aufgabe; die erste bleibt erledigt.
-- Es läuft ohne Server und ohne Dauerbetrieb: kurze Läufe über die Windows-Aufgabenplanung, kostenlos auf einem einzelnen Windows-PC.
+- Es läuft ohne Server: kurze Läufe über die Windows-Aufgabenplanung oder Linux-systemd-Benutzertimer.
 - Bei Problemen öffnet sich ein HTML-Bericht in deinem Browser, und Windows zeigt zusätzlich eine kurze **Benachrichtigung**
   („SchulSync: Problem beim Abgleich“); beides höchstens einmal pro Problem und Tag. Bei Erfolg öffnet sich nichts.
 - `schulsync status` zeigt ohne Internet, was in den **nächsten 7 Tagen** ansteht und was neu erfasst wurde.
@@ -61,8 +61,8 @@ Voreingestellt ist WebUntis der **HTBLA Grieskirchen**; für eine andere Schule 
 
 ## 2. Voraussetzungen
 
-- **Windows 11.** Dort wurde SchulSync entwickelt und getestet. Ein normales Benutzerkonto genügt, **Administratorrechte sind nicht nötig**.
-- **Python 3.11 oder neuer**, empfohlen **3.13** (damit wurden alle Tests ausgeführt). Download:
+- **Windows 11 oder Linux x86_64.** Ein normales Benutzerkonto genügt; für automatische Läufe benötigt Linux systemd-Benutzertimer.
+- Für die Python-Installation: **Python 3.11 oder neuer**, empfohlen **3.13**. Die fertigen Programme enthalten Python. Download:
   https://www.python.org/downloads/ . Beim Installieren „Add python.exe to PATH“ ankreuzen.
 - Ein **Google-Konto** (z. B. Gmail).
 - Dein Eduvidual- und dein WebUntis-Zugang mit Benutzername und Passwort. Eine Anmeldung nur über das Bildungsportal,
@@ -71,7 +71,35 @@ Voreingestellt ist WebUntis der **HTBLA Grieskirchen**; für eine andere Schule 
 
 ## 3. Installation
 
-### Variante A (empfohlen): fertige `SchulSync-Setup.exe`
+### Linux: AppImage oder Python-Paket
+
+Lade aus der GitHub-Release entweder `SchulSync-x86_64.AppImage` oder das Python-Wheel `schulsync-…-py3-none-any.whl`. Das AppImage und der alternative `SchulSync-Linux-x86_64.tar.gz` enthalten ein fertiges x86_64-Programm; sie werden unter Ubuntu 24.04 gebaut und benötigen eine kompatible glibc (mindestens 2.39). Für ältere Linux-Systeme nutze das Python-Paket.
+
+**AppImage:**
+
+```bash
+chmod +x SchulSync-x86_64.AppImage
+./SchulSync-x86_64.AppImage --version
+./SchulSync-x86_64.AppImage setup
+./SchulSync-x86_64.AppImage autostart install
+```
+
+Falls FUSE fehlt, stelle bei Aufrufen `APPIMAGE_EXTRACT_AND_RUN=1` voran. Der systemd-Timer verwendet diesen Modus automatisch. Verschiebe das AppImage nach der Einrichtung nicht; andernfalls führe `autostart install` am neuen Speicherort erneut aus.
+
+**Python-Wheel:**
+
+```bash
+python3 -m venv ~/.local/share/schulsync-env
+~/.local/share/schulsync-env/bin/python -m pip install ./schulsync-*-py3-none-any.whl
+~/.local/share/schulsync-env/bin/schulsync setup
+~/.local/share/schulsync-env/bin/schulsync autostart install
+```
+
+Linux benötigt eine laufende, entsperrte **Secret-Service-Schlüsselverwaltung** (z. B. GNOME Keyring oder KWallet mit Secret-Service-Unterstützung) und einen D-Bus-Benutzerbus. Passwörter und Google-Tokens werden dort geschützt gespeichert; es gibt keinen Rückfall auf unverschlüsselte Dateien. Für Benachrichtigungen ist `notify-send` optional. Ein Browser ist für die Google-Anmeldung nötig.
+
+Die Daten liegen unter `$XDG_DATA_HOME/schulsync`, standardmäßig `~/.local/share/schulsync`. `schulsync settings` und `schulsync status` funktionieren auch unter Linux. Die systemd-Benutzertimer starten zwei tägliche Synchronisierungen und bei Fehlern bedarfsgesteuerte Wiederholungen; `schulsync autostart remove` entfernt sie. Ein separater Timer prüft den Google-Login. Läuft der Benutzer-Manager während Abmeldung oder ausgeschaltetem PC nicht, werden verpasste Timer nach dem nächsten Start nachgeholt.
+
+### Windows: fertige `SchulSync-Setup.exe`
 
 Du brauchst weder Python noch Git.
 
@@ -103,7 +131,7 @@ schulsync uninstall
 Der Befehl entfernt den Autostart, den PATH-Eintrag und den Programmordner (der Ordner wird gelöscht, sobald sich das Fenster schließt).
 Deine Einstellungen, Passwörter und Daten in `%LOCALAPPDATA%\SchulSync` bleiben erhalten. Sie mitzulöschen: `schulsync uninstall --data` (mit Rückfrage).
 
-Beim Start über den Autostart kann das Konsolenfenster für einen Augenblick aufblitzen; es schließt sich sofort wieder.
+Der automatische Start erfolgt ohne sichtbares Konsolenfenster.
 
 ### Variante B: aus dem Quellcode
 
@@ -199,7 +227,7 @@ Datenschutzerklärung im Internet; für eine private App ist das unnötig.
 
 Im Test-Modus läuft die Google-Anmeldung laut Google nach **7 Tagen** ab
 (https://developers.google.com/identity/protocols/oauth2#expiration). **SchulSync kümmert sich selbst darum:** Ist die Anmeldung
-abgelaufen, **öffnet sich beim nächsten Lauf automatisch ein Browserfenster mit dem Google-Login**. Du meldest dich an, bestätigst die
+nicht mehr erneuerbar, **prüft ein separater Hintergrundtask die Anmeldung etwa stündlich und öffnet bei Bedarf den Google-Login im Browser**. Du meldest dich an, bestätigst die
 Berechtigungen, und der Abgleich läuft direkt weiter. Meldest du dich nicht innerhalb von 10 Minuten an, wird der Lauf abgebrochen und im
 Bericht gemeldet; beim nächsten Start kommt das Fenster wieder. Von Hand geht es jederzeit mit:
 
@@ -367,11 +395,11 @@ schulsync autostart remove
 
 `schulsync autostart install` legt in der **Windows-Aufgabenplanung** eine Aufgabe namens **SchulSync** an:
 
-- **Anmeldetrigger** („Bei Anmeldung“) nur für **deinen** Benutzer, mit **etwa einer Minute Startverzögerung**,
-- zusätzlich **täglich um 6:00 und 18:00 Uhr** und minütlich eine Fälligkeitsprüfung für ausstehende Wiederholungen; war der PC aus, wird ein überfälliger Versuch nach dem Start nachgeholt,
+- **zweimal täglich** zu den eingestellten Uhrzeiten (Standard: 6:00 und 18:00 Uhr),
+- bei einem Fehler ein gesonderter Wiederholungsversuch nach einer Stunde; war der PC aus, wird der überfällige Versuch nach dem Start nachgeholt,
 - läuft **in deinem Benutzerkonto** in deiner angemeldeten Sitzung (damit sich bei Problemen ein Bericht in deinem Browser öffnen kann),
 - **ohne erhöhte Rechte**, kein Passwort nötig,
-- startet `pythonw.exe -m schulsync run --auto` aus der `.venv` (ohne Konsolenfenster),
+- startet SchulSync ohne sichtbares Konsolenfenster,
 - die Aufgabe wird nach einer Stunde von Windows beendet; ein Lauf dauert normalerweise nur Sekunden.
 
 Du siehst die Aufgabe in der Aufgabenplanung (Windows-Taste, „Aufgabenplanung“) in der Aufgabenplanungsbibliothek.
@@ -393,7 +421,7 @@ Erlaubt dein PC (z. B. ein verwaltetes Schulgerät) keine eigene Aufgabe in der 
 **automatisch** eine **Autostart-Verknüpfung** ein: `SchulSync.lnk` im Startup-Ordner deines Benutzers
 (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`, öffnen mit Windows-Taste + R und `shell:startup`). Die Ausgabe sagt, dass die Verknüpfung benutzt wurde.
 
-Die Verknüpfung startet bei der Anmeldung einen versteckten Hintergrund-Wächter, der minütlich fällige Läufe prüft. Entfernen: `schulsync autostart remove`
+Die Verknüpfung startet bei der Anmeldung einen versteckten Hintergrund-Wächter, der SchulSync nur zu den eingestellten Uhrzeiten oder für fällige Wiederholungen startet. Entfernen: `schulsync autostart remove`
 (oder die Verknüpfung im Ordner `shell:startup` löschen).
 
 Klappt auch das nicht, nennt der Befehl die Handarbeit: Windows-Taste + R, `shell:startup`, im geöffneten Ordner mit der rechten Maustaste **Neu**, **Verknüpfung**, auf
@@ -403,11 +431,11 @@ Aufgabe und Verknüpfung werden nie zugleich benutzt, sonst startete SchulSync d
 
 ## 11. Täglicher Ablauf und Regeln
 
-**Ablauf:** Du meldest dich an, nach etwa einer Minute startet SchulSync. Es wartet bei Bedarf bis zu **zwei Minuten auf das Internet**, liest beide Quellen **unabhängig voneinander**, wiederholt
+**Ablauf:** SchulSync startet zweimal täglich zu den eingestellten Uhrzeiten. Es wartet bei Bedarf bis zu **zwei Minuten auf das Internet**, liest beide Quellen **unabhängig voneinander**, wiederholt
 Fehler **wenige Male mit wachsender Wartezeit** (Standard: 4 Versuche, 15/60/180 Sekunden Pause) und schreibt die Änderungen nach Google.
 
-- **Höchstens ein erfolgreicher automatischer Lauf je Zeitfenster** (00–06, 06–18 und 18–24 Uhr, Europe/Vienna, auch bei Sommer-/Winterzeit), **getrennt je Quelle**. Das gilt an **jedem** Tag
-  einschließlich Montag und Wochenende. Jede weitere automatische Anmeldung im selben Zeitfenster endet **still**; die Läufe um 6 und 18 Uhr prüfen erneut auf Änderungen (verschobene Fristen und Tests, zurückgenommene Entfälle). Ein erfolgreicher manueller Lauf zählt ebenfalls.
+- **Höchstens ein erfolgreicher automatischer Lauf je Zeitfenster** (ab Mitternacht beziehungsweise einer der eingestellten Uhrzeiten, Europe/Vienna, auch bei Sommer-/Winterzeit), **getrennt je Quelle**. Das gilt an **jedem** Tag
+  einschließlich Montag und Wochenende. Die eingestellten Läufe prüfen erneut auf Änderungen (verschobene Fristen und Tests, zurückgenommene Entfälle). Ein erfolgreicher manueller Lauf zählt ebenfalls.
 - Ein **Teilfehler gilt nie als vollständiger Erfolg**: Eine fehlgeschlagene Quelle oder ein offener Google-Schreibvorgang wird beim nächsten Start nachgeholt, **ohne** bereits
   Erledigtes doppelt anzulegen.
 - **Ohne Internet** nach der Anmeldung: Es wird gewartet und dann trotzdem versucht; was fehlt, kommt beim nächsten Start.
@@ -419,7 +447,7 @@ Fehler **wenige Male mit wachsender Wartezeit** (Standard: 4 Versuche, 15/60/180
 
 | Quelle / Art | Google Kalender „Schule“ | Google Tasks „Schule“ | Vorlauf |
 |---|---|---|---|
-| Eduvidual-Aufgabe / Abgabe | **kein Kalendereintrag** (nur als Task; wer beides will: `assignment_calendar = true`) | „Bearbeiten: Titel“ (wird beim Abgeben in Eduvidual **automatisch abgehakt**) | Aufgabendatum = **Datum von (Frist minus 6 Stunden)**, z. B. Frist Do 22.10. 18:00 gibt Do 22.10.; Frist 05:00 gibt den Vortag (die echte Frist steht im Text) |
+| Eduvidual-Aufgabe / Abgabe | **kein Kalendereintrag** (nur als Task; wer beides will: `assignment_calendar = true`) | „Bearbeiten: Titel“ (wird beim Abgeben in Eduvidual **automatisch abgehakt**) | Aufgabendatum = **Datum von (Frist minus 24 Stunden)**; die echte Frist mit Uhrzeit steht im Text |
 | WebUntis-Hausaufgabe | „Abgabe: Titel“ am Abgabetermin | „Bearbeiten: Titel“ | **3 Kalendertage** vorher |
 | Prüfung / Schularbeit | Prüfungstermin mit Start und Ende (Art laut Quelle, z. B. „Schularbeit: …“, sonst „Prüfung: …“) | „Lernen: Titel“ | **7 Kalendertage** vorher |
 | Unterrichtsentfall | „Entfall: Titel“ mit exakter Start- und Endzeit | keine Aufgabe | – |
@@ -461,11 +489,14 @@ Nicht übernommen werden Supplierungen, reine Lehrkraft- oder Raumänderungen un
 
 ### Einstellungen ändern: `schulsync settings`
 
+`schulsync google-auth-check --auto` prüft die Google-Anmeldung unabhängig vom Schulabgleich im Hintergrund.
+
 Die wichtigsten Regeln lassen sich ohne Bearbeiten der `config.toml` ändern (Voraussetzung: `schulsync setup` wurde einmal ausgeführt):
 
 ```powershell
 schulsync settings                              # Menü: Nummer wählen, neuen Wert eingeben, leer = behalten, q = fertig
 schulsync settings --list                       # alle Einstellungen mit Wert, Standard, Hilfe und erlaubtem Bereich (keine Eingaben)
+schulsync settings --set schedule.run_times=07:00,19:00  # zwei tägliche Startzeiten
 schulsync study-preview                          # Lernaufgaben zu lokal bekannten Prüfungen ohne Google-Zugriff anzeigen
 schulsync settings --set rules.study_every_days=4 --set rules.study_start_days=14   # mehrere --set möglich
 schulsync settings --reset rules.study_every_days                                   # zurück auf den Standard
@@ -475,7 +506,7 @@ Angeboten werden: Erinnerung vor Terminen (`rules.reminder_minutes`), Task-Datum
 ob sie zusätzlich in den Kalender kommen (`rules.assignment_calendar`), Vorlauf der Hausaufgaben und Lern-Tasks (`rules.homework_lead_days`, `rules.exam_lead_days`),
 der Lernplan (`rules.study_every_days`, `rules.study_start_days`), das Prüffenster (`rules.window_days`), `report.notify`, `report.open_on`,
 `report.keep_days`, `report.log_keep_days`, die WebUntis-Kategorien (`webuntis.categories`, z. B. `homework,exams`) und die Eduvidual-Kurse (`eduvidual.courses`, leer = alle).
-Ja/nein-Werte akzeptieren `ja`/`nein`/`true`/`false`; Listen werden durch Kommas getrennt. Die Uhrzeiten der Läufe lassen sich hier nicht ändern.
+Ja/nein-Werte akzeptieren `ja`/`nein`/`true`/`false`; Listen werden durch Kommas getrennt. Die beiden täglichen Uhrzeiten können mit `schedule.run_times` geändert werden; nach dem Speichern wird ein bestehender Autostart aktualisiert.
 
 Jede Änderung wird **vor dem Speichern vollständig geprüft**. Ist ein Wert ungültig (Zahl außerhalb des Bereichs, unbekannte Auswahl), nennt der Befehl den erlaubten Bereich,
 beendet sich mit Exit-Code 2 und lässt die `config.toml` **unverändert**. Kommentare und alle anderen Zeilen der Datei bleiben erhalten.
@@ -526,8 +557,8 @@ stehen; den Zugriff widerrufst du in deinem Google-Konto unter „Sicherheit“.
 
 | Problem | Ursache und Lösung |
 |---|---|
-| **Anmeldung abgelehnt / Sperre** („Anmeldung abgelehnt seit …“ in `schulsync status`) | Passwort bei Eduvidual oder WebUntis falsch. SchulSync probiert genau **einmal** und sperrt die Quelle für automatische Läufe, damit dein Konto nicht gesperrt wird. Passwort korrigieren: `schulsync setup --eduvidual` bzw. `--webuntis`, dann `schulsync check` oder `schulsync run`: Die Sperre wird aufgehoben, sobald die Anmeldung klappt. Ist dein Konto bei der Schule bereits gesperrt, nur dort entsperren lassen. |
-| **Google-Anmeldung abgelaufen oder widerrufen** | Im Test-Modus alle 7 Tage normal: Beim nächsten Lauf öffnet sich der Google-Login von selbst (Abschnitt 4.5). Von Hand: `schulsync setup --google`. Kommt „Zugriff blockiert“, fehlt deine Adresse unter **Testnutzer**. |
+| **Anmeldung abgelehnt / Sperre** („Anmeldung abgelehnt seit …“ in `schulsync status`) | Passwort bei Eduvidual oder WebUntis falsch. SchulSync versucht die Anmeldung pro Lauf einmal und versucht es bei einem Fehler später erneut. Passwort korrigieren: `schulsync setup --eduvidual` bzw. `--webuntis`, dann `schulsync check` oder `schulsync run`: Die Sperre wird aufgehoben, sobald die Anmeldung klappt. Ist dein Konto bei der Schule bereits gesperrt, nur dort entsperren lassen. |
+| **Google-Anmeldung abgelaufen oder widerrufen** | Im Test-Modus kann dies nach 7 Tagen passieren: Die separate Hintergrundprüfung öffnet bei Bedarf den Google-Login (Abschnitt 4.5). Von Hand: `schulsync setup --google`. Kommt „Zugriff blockiert“, fehlt deine Adresse unter **Testnutzer**. |
 | **Kalender „Schule“ nicht gefunden** | Er wird nicht automatisch angelegt (Abschnitt 5). Kalender anlegen, Name genau „Schule“, dann `schulsync setup --google`. Mehrere Kalender gleichen Namens: umbenennen, sodass genau einer „Schule“ heißt. Der Hauptkalender wird nie benutzt. |
 | **Mehrere Google-Konten / falsches Konto** | Die Einrichtung bricht mit „Du hast dich bei Google als … angemeldet“ ab und speichert nichts. Im Browser das Konto aus `config.toml` wählen und `schulsync setup --google` wiederholen. Willst du bewusst ein anderes Konto, trage es zuerst in `config.toml` unter `[google]` bei `account` ein. |
 | **Bericht öffnet sich nicht** | `schulsync report` versucht es erneut. Klappt auch das nicht, steht der Pfad in der Ausgabe: `%LOCALAPPDATA%\SchulSync\reports\latest.html` per Doppelklick öffnen. Der Pfad steht auch im Protokoll unter `logs\`. Prüfe, ob ein Standardbrowser eingestellt ist. |
@@ -608,8 +639,8 @@ powershell -File scripts\build_exe.ps1
 Veröffentlichen: Erhöhe `__version__` in `src/schulsync/__init__.py` (und `version` in `pyproject.toml`), committe, und pushe einen passenden Tag:
 
 ```powershell
-git tag v2.0.0
-git push origin v2.0.0
+git tag v2.0.1
+git push origin v2.0.1
 ```
 
 Der Workflow `.github/workflows/release.yml` führt die Tests aus, baut die .exe und legt auf GitHub eine Release mit `SchulSync-Setup.exe` und der Prüfsumme an.

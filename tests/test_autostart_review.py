@@ -27,6 +27,8 @@ class Sys:
     def __call__(self, args, **kw):
         args = [str(a) for a in args]
         exe = Path(args[0]).name.lower()
+        if "SchulSync-Retry" in args or "SchulSync-Google-Login" in args:
+            return subprocess.CompletedProcess(args, 1, b"ERROR: The system cannot find the file specified.", b"")
         if exe == "powershell.exe":
             Path(kw["env"]["SCHULSYNC_LNK"]).write_bytes(b"lnk")
             return subprocess.CompletedProcess(args, 0, b"", b"")
@@ -52,6 +54,7 @@ def system(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))
     monkeypatch.setattr(autostart, "current_user", lambda: USER)
     monkeypatch.setattr(autostart, "default_command", lambda: (r"C:\P\pythonw.exe", "-m schulsync run --auto"))
+    monkeypatch.setattr(autostart, "_install_google_check", lambda paths: None)
     monkeypatch.setattr(autostart, "_oem_codepage", lambda: 850)
     return s
 

@@ -176,6 +176,7 @@ class Deps:
     network_ready: Callable[[], bool] = default_network_ready
     state: StateStore | None = None
     notify: Callable[[str, str], bool] = lambda title, text: notify_mod.toast(title, text)  # looked up at call time (tests patch it)
+    retry_schedule: Callable[[datetime | None], None] | None = None
 
 
 @dataclass
@@ -195,6 +196,16 @@ def run(deps: Deps, mode: RunMode, *, force: bool = False) -> RunOutcome:
     except OSError as exc:  # lock file not creatable: do not run unprotected
         return RunOutcome(2, None, None, f"Die Prozesssperre konnte nicht angelegt werden ({type(exc).__name__}).", False)
     if not acquired:
+        if mode == RunMode.AUTO:
+            try:
+                state = retry_state.read(deps.paths)
+                due = state.get('next_retry')
+                if not due and state.get('in_progress'):
+                    due = (datetime.fromisoformat(state['in_progress']).astimezone(UTC) + timedelta(hours=1)).isoformat()
+                if due and datetime.fromisoformat(due).astimezone(UTC) <= deps.clock().astimezone(UTC):
+                    _schedule_retry(deps, deps.clock().astimezone(UTC) + timedelta(minutes=1))
+            except (OSError, ValueError, TypeError):
+                log.warning('Wiederholung bei belegter Prozesssperre konnte nicht vorgemerkt werden.')
         return _locked(mode)
     try:
         if mode != RunMode.PREVIEW:
@@ -208,7 +219,10 @@ def run(deps: Deps, mode: RunMode, *, force: bool = False) -> RunOutcome:
                         return RunOutcome(0, None, None, "", True)
                     recovered = retry_state.record(deps.paths, {"program:unexpected"}, started)
                     if recovered["counts"].get("program:unexpected", 0) >= 3 and "program:unexpected" not in recovered["notified"]:
+                        _schedule_retry(deps, datetime.fromisoformat(recovered["next_retry"]))
                         return _report_interrupted(deps, started)
+                # Arm before doing work: a hard crash leaves a one-shot retry behind.
+                _schedule_retry(deps, deps.clock().astimezone(UTC) + timedelta(hours=1))
                 retry_state.begin(deps.paths, deps.clock())
             except (OSError, ValueError, TypeError):
                 log.exception("Laufstatus konnte nicht gespeichert werden.")
@@ -218,9 +232,24 @@ def run(deps: Deps, mode: RunMode, *, force: bool = False) -> RunOutcome:
                 retry_state.clear_progress(deps.paths)
             except (OSError, ValueError, TypeError):
                 log.exception("Laufstatus konnte nicht zurückgesetzt werden.")
+        if mode != RunMode.PREVIEW:
+            try:
+                next_retry = retry_state.read(deps.paths).get("next_retry")
+                _schedule_retry(deps, datetime.fromisoformat(next_retry) if next_retry else None)
+            except (OSError, ValueError, TypeError):
+                log.exception("Wiederholungszeitpunkt konnte nicht eingeplant werden.")
         return outcome
     finally:
         lock.release()
+
+
+def _schedule_retry(deps: Deps, due: datetime | None) -> None:
+    if deps.retry_schedule is None:
+        return
+    try:
+        deps.retry_schedule(due)
+    except Exception:  # noqa: BLE001 - scheduling must not lose an otherwise completed run
+        log.exception("Wiederholungsaufgabe konnte nicht aktualisiert werden.")
 
 
 def _report_interrupted(deps: Deps, started: datetime) -> RunOutcome:
@@ -296,7 +325,7 @@ class _Run:
         self.preview = mode == RunMode.PREVIEW
         self.started = deps.clock()
         self.day: date = today_vienna(self.started)
-        self.slot = slot_start(self.started, RUN_TIMES)
+        self.slot = slot_start(self.started, self.cfg.schedule.run_times)
         self.t0 = deps.monotonic()
         enabled = set(self.cfg.enabled_sources)
         self.sources = [s for s in Source if s.value in enabled]

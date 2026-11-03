@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import tomllib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -18,7 +19,7 @@ from typing import Any, Mapping
 from .errors import ConfigError
 
 ENV_HOME = "SCHULSYNC_HOME"
-# Feste tägliche Läufe (zusätzlich zur Anmeldung); Aufgabenplanung und Zeitfenster-Sperre nutzen beide diese Liste.
+# Standardzeiten für die zwei täglichen Läufe.
 RUN_TIMES: tuple[str, ...] = ("06:00", "18:00")
 WEBUNTIS_CATEGORIES = ("homework", "exams", "cancellations")
 # The scheduled task is ended by Windows after one hour (autostart.build_task_xml, ExecutionTimeLimit PT1H). The run limit
@@ -37,6 +38,8 @@ class Paths:
         env = os.environ.get(ENV_HOME)
         if env:
             return cls(Path(env))
+        if sys.platform.startswith("linux"):
+            return cls(Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "schulsync")
         base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
         return cls(Path(base) / "SchulSync")
 
@@ -101,13 +104,20 @@ class GoogleConfig:
 class RulesConfig:
     window_days: int = 31
     assignment_lead_days: int = 1  # nur wenn assignment_lead_hours = 0
-    assignment_lead_hours: int = 6  # Eduvidual-Aufgabe: Task-Datum = Datum von (Frist minus 6 Stunden); 0 = assignment_lead_days
+    assignment_lead_hours: int = 24  # Eduvidual-Aufgabe: Frist minus 24 Stunden; 0 = assignment_lead_days
     assignment_calendar: bool = False  # Eduvidual-Aufgaben nur als Task; true = zusätzlich Kalendertermin
     homework_lead_days: int = 3
     exam_lead_days: int = 7
     study_every_days: int = 0  # Lernplan: alle x Tage vor einer Prüfung eine zusätzliche Lern-Task; 0 = aus
     study_start_days: int = 14  # Lernplan beginnt so viele Tage vor der Prüfung
+    study_mode: str = "interval"  # interval | days | both
+    study_days: tuple[int, ...] = ()  # einzelne Tage relativ zur Prüfung: -1 = Vortag, 0 = Prüfungstag
     reminder_minutes: int = 1440
+
+
+@dataclass(frozen=True)
+class ScheduleConfig:
+    run_times: tuple[str, ...] = RUN_TIMES
 
 
 @dataclass(frozen=True)
@@ -135,6 +145,7 @@ class Config:
     webuntis: WebUntisConfig = field(default_factory=WebUntisConfig)
     google: GoogleConfig = field(default_factory=GoogleConfig)
     rules: RulesConfig = field(default_factory=RulesConfig)
+    schedule: ScheduleConfig = field(default_factory=ScheduleConfig)
     retry: RetryConfig = field(default_factory=RetryConfig)
     report: ReportConfig = field(default_factory=ReportConfig)
 
@@ -153,6 +164,7 @@ _SECTIONS: dict[str, type] = {
     "webuntis": WebUntisConfig,
     "google": GoogleConfig,
     "rules": RulesConfig,
+    "schedule": ScheduleConfig,
     "retry": RetryConfig,
     "report": ReportConfig,
 }
@@ -201,6 +213,9 @@ def _validate(cfg: Config) -> None:
     need(cfg.eduvidual.method in ("auto", "webservice", "web"), "[eduvidual] method: auto, webservice oder web.")
     need(cfg.eduvidual.base_url.startswith("https://"), "[eduvidual] base_url muss mit https:// beginnen.")
     need(cfg.webuntis.base_url.startswith("https://"), "[webuntis] base_url muss mit https:// beginnen.")
+    times = cfg.schedule.run_times
+    need(len(times) == 2 and all(isinstance(t, str) and re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", t) for t in times)
+         and len(set(times)) == 2, "[schedule] run_times braucht zwei verschiedene Uhrzeiten im Format HH:MM.")
     bad = [c for c in cfg.webuntis.categories if c not in WEBUNTIS_CATEGORIES]
     need(not bad, f"[webuntis] categories: unbekannt {bad}; erlaubt {list(WEBUNTIS_CATEGORIES)}.")
     r = cfg.rules
@@ -212,6 +227,9 @@ def _validate(cfg: Config) -> None:
     need(1 <= t.max_attempts <= 10, "[retry] max_attempts muss zwischen 1 und 10 liegen.")
     need(1 <= t.failures_before_report <= 24, "[retry] failures_before_report muss zwischen 1 und 24 liegen.")
     need(0 <= r.study_every_days <= 30 and 1 <= r.study_start_days <= 60, "[rules] study_every_days 0-30, study_start_days 1-60.")
+    need(r.study_mode in ("interval", "days", "both"), "[rules] study_mode muss interval, days oder both sein.")
+    need(all(isinstance(d, int) and not isinstance(d, bool) and -60 <= d <= 0 for d in r.study_days)
+         and len(set(r.study_days)) == len(r.study_days), "[rules] study_days: verschiedene ganze Zahlen von -60 bis 0.")
     need(all(d >= 0 for d in t.delays_seconds), "[retry] delays_seconds dürfen nicht negativ sein.")
     need(t.connect_timeout > 0 and t.read_timeout > 0, "[retry] Zeitlimits müssen positiv sein.")
     need(t.network_wait_seconds >= 0, "[retry] network_wait_seconds darf nicht negativ sein.")

@@ -5,13 +5,14 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import replace
 
+from schulsync import rules
 from schulsync.config import Config, RulesConfig
 from schulsync.models import EventState, TaskState
 from schulsync.state import StateStore
 from tests.support import samples as S
 from tests.support.engine_harness import Rig
 
-NEW = Config()  # the new defaults: tasks only, 1 day
+NEW = Config(rules=RulesConfig(assignment_lead_hours=6))  # explicit legacy setting
 OLD = Config(rules=RulesConfig(**S.LEGACY_RULES))
 
 
@@ -21,7 +22,8 @@ def _a(**kw):
 
 def test_defaults_are_tasks_only_one_day_before():
     r = RulesConfig()
-    assert r.assignment_lead_hours == 6 and r.assignment_calendar is False
+    assert r.assignment_lead_hours == 24 and r.assignment_calendar is False
+    assert rules.task_start_date(S.assignment(due=S.at(2026, 11, 9, 8, 0)), r).isoformat() == "2026-11-08"
 
 
 def test_an_assignment_creates_only_a_task_dated_six_hours_before_the_deadline():
@@ -102,7 +104,7 @@ def test_the_v4_migration_marks_assignments_for_a_recheck(tmp_path):
 def test_the_task_date_is_the_date_of_deadline_minus_six_hours():
     from schulsync import rules
 
-    cfg = RulesConfig()
+    cfg = RulesConfig(assignment_lead_hours=6)
     d = lambda *a: S.at(*a)
     assert rules.task_start_date(S.assignment(due=d(2026, 10, 22, 18, 0)), cfg).isoformat() == "2026-10-22"  # 12:00 same day
     assert rules.task_start_date(S.assignment(due=d(2026, 10, 22, 5, 0)), cfg).isoformat() == "2026-10-21"  # 23:00 the day before
@@ -129,6 +131,20 @@ def test_a_task_the_user_ticked_off_and_then_reopened_follows_the_school_again()
     (t,) = rig.google.open_tasks
     assert t["id"] == task["id"] and t["due"].startswith("2026-10-30") and len(rig.google.tasks) == 1
     assert rig.st(a).task_state == TaskState.OPEN
+
+
+def test_reopened_task_is_detected_even_when_the_school_item_is_unchanged():
+    rig = Rig(cfg=NEW)
+    a = _a()
+    rig.sync(a)
+    task = rig.google.open_tasks[0]
+    rig.google.user_complete_task(task["id"])
+    rig.sync(replace(a, title="Geändert"))
+    assert rig.st(a).task_state == TaskState.DONE
+    rig.google.user_reopen_task(task["id"])
+    rig.sync(replace(a, title="Geändert"))
+    assert rig.st(a).task_state == TaskState.OPEN
+    assert len(rig.google.tasks) == 1
 
 
 def test_a_task_that_stays_ticked_off_is_never_touched_even_when_the_deadline_moves():

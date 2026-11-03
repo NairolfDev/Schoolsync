@@ -1,7 +1,7 @@
 """Verhalten der fertigen schulsync.exe (PyInstaller): Installation, Konsole, Aufräumen nach einem Update.
 
-Die .exe ist ein Konsolenprogramm. Beim Start über die Aufgabenplanung (`run --auto`) schließt sie ihr Konsolenfenster sofort
-(`FreeConsole`); ein kurzes Aufblitzen lässt sich unter Windows nicht ganz vermeiden. Per Doppelklick (kein Befehl) startet sie die
+Die .exe ist ein Konsolenprogramm. Die Aufgabenplanung startet sie über einen unsichtbaren Windows-Skriptstarter;
+bei einem direkten automatischen Start löst sie die Konsole mit `FreeConsole`. Per Doppelklick (kein Befehl) startet sie die
 Installation und wartet am Ende auf Enter, damit das Fenster nicht sofort verschwindet.
 """
 
@@ -31,8 +31,10 @@ def install_dir() -> Path:
 def resource(name: str) -> Path | None:
     """Mitgelieferte Datei (z. B. config.example.toml): im PyInstaller-Paket, sonst im Projektordner."""
     base = Path(getattr(sys, "_MEIPASS", "")) if is_frozen() else Path(__file__).resolve().parents[2]
-    p = base / name
-    return p if p.is_file() else None
+    for p in (base / name, Path(__file__).resolve().parent / name):
+        if p.is_file():
+            return p
+    return None
 
 
 def exe_path() -> Path:

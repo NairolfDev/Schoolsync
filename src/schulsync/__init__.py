@@ -1,3 +1,3 @@
 """SchulSync: Eduvidual und WebUntis -> Google Kalender und Google Tasks."""
 
-__version__ = "2.0.0"
+__version__ = "2.0.1"

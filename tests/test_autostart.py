@@ -59,22 +59,16 @@ def test_xml_is_well_formed_and_declares_utf16():
     assert root.get("version") == "1.2"
 
 
-def test_xml_logon_trigger_for_user_with_delay():
+def test_xml_two_daily_triggers_without_polling_or_extra_logon():
     root = parse(sample_xml())
     trig = root.find("t:Triggers/t:LogonTrigger", NS)
-    assert trig is not None
-    assert text(root, "t:Triggers/t:LogonTrigger/t:UserId") == USER
-    assert text(root, "t:Triggers/t:LogonTrigger/t:Delay") == "PT1M"
-    assert text(root, "t:Triggers/t:LogonTrigger/t:Enabled") == "true"
-    assert len(root.findall("t:Triggers/*", NS)) == 4  # Anmeldung, stuendlicher Wiederholer, 06:00 und 18:00
+    assert trig is None
+    assert len(root.findall("t:Triggers/*", NS)) == 2
     cals = root.findall("t:Triggers/t:CalendarTrigger", NS)
-    assert [c.find("t:StartBoundary", NS).text[-8:] for c in cals] == ["00:00:00", "06:00:00", "18:00:00"]
+    assert [c.find("t:StartBoundary", NS).text[-8:] for c in cals] == ["06:00:00", "18:00:00"]
     assert all(c.find("t:ScheduleByDay/t:DaysInterval", NS).text == "1" for c in cals)
     assert all(c.find("t:Enabled", NS).text == "true" for c in cals)
-    hourly, *fixed = cals
-    assert text(hourly, "t:Repetition/t:Interval") == "PT1M" and text(hourly, "t:Repetition/t:Duration") == "P1D"
-    assert text(hourly, "t:Repetition/t:StopAtDurationEnd") == "false"
-    assert all(c.find("t:Repetition", NS) is None for c in fixed)
+    assert all(c.find("t:Repetition", NS) is None for c in cals)
 
 
 def test_xml_principal_is_interactive_least_privilege_and_never_admin():
@@ -123,7 +117,7 @@ def test_xml_escapes_ampersand_umlaut_angle_brackets_and_quotes():
     assert text(root, "t:Actions/t:Exec/t:Command") == TRICKY_COMMAND
     assert text(root, "t:Actions/t:Exec/t:WorkingDirectory") == TRICKY_WORKDIR
     assert text(root, "t:Actions/t:Exec/t:Arguments") == '-m schulsync run --auto --note "a & b"'
-    assert text(root, "t:Triggers/t:LogonTrigger/t:UserId") == user
+    assert text(root, "t:Principals/t:Principal/t:UserId") == user
     assert "& Söhne" not in xml and "&amp; Söhne" in xml  # rohes & kommt nicht vor
 
 
@@ -136,7 +130,6 @@ def test_xml_paths_with_spaces_are_not_wrapped_in_quotes():
 
 def test_xml_custom_delay_and_time_limit_and_optional_fields_omitted():
     root = parse(sample_xml(delay="PT90S", time_limit="PT30M", arguments="", working_dir=""))
-    assert text(root, "t:Triggers/t:LogonTrigger/t:Delay") == "PT90S"
     assert text(root, "t:Settings/t:ExecutionTimeLimit") == "PT30M"
     assert root.find("t:Actions/t:Exec/t:Arguments", NS) is None
     assert root.find("t:Actions/t:Exec/t:WorkingDirectory", NS) is None
@@ -152,12 +145,12 @@ def test_xml_rejects_malformed_durations(bad):
 
 @pytest.mark.parametrize("good", ["PT1M", "PT30S", "PT1H30M", "P1D", "P1DT2H"])
 def test_xml_accepts_iso_durations(good):
-    assert text(parse(sample_xml(delay=good)), "t:Triggers/t:LogonTrigger/t:Delay") == good
+    assert autostart._check_duration("delay", good) == good
 
 
 def test_xml_has_german_description():
     desc = text(parse(sample_xml()), "t:RegistrationInfo/t:Description")
-    assert desc and "SchulSync" in desc and "Anmeldung" in desc
+    assert desc and "SchulSync" in desc and "tägliche" in desc
     assert text(parse(sample_xml()), "t:RegistrationInfo/t:Author") == USER
 
 
@@ -226,6 +219,8 @@ class FakeSystem:
 
     def _schtasks(self, args):
         op = args[1].lower()
+        if args[args.index("/TN") + 1] in ("SchulSync-Retry", "SchulSync-Google-Login"):
+            return self._done(args, 1, b"ERROR: The system cannot find the file specified.")
         assert args[args.index("/TN") + 1] == "SchulSync"
         if op == "/create":
             self.xml_path = Path(args[args.index("/XML") + 1])
@@ -255,7 +250,7 @@ class FakeSystem:
         return self._done(args, self.shortcut_rc, b"" if self.shortcut_rc == 0 else b"Fehler beim Speichern")
 
     def ops(self, exe: str = "schtasks.exe") -> list[str]:
-        return [a[1].lower() for a, _ in self.calls if Path(a[0]).name.lower() == exe]
+        return [a[1].lower() for a, _ in self.calls if Path(a[0]).name.lower() == exe and "SchulSync-Retry" not in a and "SchulSync-Google-Login" not in a]
 
 
 @pytest.fixture
@@ -265,6 +260,7 @@ def system(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))
     monkeypatch.setattr(autostart, "current_user", lambda: USER)
     monkeypatch.setattr(autostart, "default_command", lambda: (TRICKY_COMMAND, "-m schulsync run --auto"))
+    monkeypatch.setattr(autostart, "_install_google_check", lambda paths: None)
     monkeypatch.setattr(autostart, "_oem_codepage", lambda: 850)
     return fake
 
@@ -300,10 +296,23 @@ def test_install_writes_utf16_xml_with_bom_and_removes_temp_file(system, paths):
     autostart.install(paths)
     assert system.xml_bytes[:2] in (b"\xff\xfe", b"\xfe\xff")
     root = ET.fromstring(system.xml_bytes)
-    assert root.find("t:Triggers/t:LogonTrigger/t:UserId", NS).text == USER
+    assert root.find("t:Principals/t:Principal/t:UserId", NS).text == USER
     assert root.find("t:Actions/t:Exec/t:Command", NS).text == TRICKY_COMMAND
     assert root.find("t:Actions/t:Exec/t:WorkingDirectory", NS).text == str(paths.home)
     assert system.xml_path is not None and not system.xml_path.exists()  # Temp-Datei aufgeraeumt
+
+
+def test_frozen_autostart_uses_windowless_launcher(system, paths, monkeypatch):
+    monkeypatch.setattr(autostart.frozen, "is_frozen", lambda: True)
+    assert autostart.install(paths).ok
+    root = ET.fromstring(system.xml_bytes)
+    assert root.find("t:Actions/t:Exec/t:Command", NS).text.lower().endswith("wscript.exe")
+    args = root.find("t:Actions/t:Exec/t:Arguments", NS).text
+    launcher = paths.home / "autostart-hidden.vbs"
+    assert str(launcher) in args
+    content = launcher.read_text(encoding="utf-16")
+    assert "WScript.Quit" in content and "WScript.Shell" in content and ", 0, True)" in content
+    assert "run --auto" in content and "--home" in content
 
 
 def test_install_removes_stale_fallback_shortcut_when_task_succeeds(system, paths, lnk):
@@ -632,13 +641,9 @@ $def.XmlText = [IO.File]::ReadAllText($args[0])   # the parser of the Task Sched
 $trigger = $def.Triggers.Item(1)
 Write-Output ('TRIGGERS=' + $def.Triggers.Count)
 Write-Output ('TRIGGER_TYPE=' + $trigger.Type)
-Write-Output ('TRIGGER_USER=' + $trigger.UserId)
-Write-Output ('TRIGGER_DELAY=' + $trigger.Delay)
+Write-Output ('TRIGGER_START=' + $trigger.StartBoundary)
 $hourly = $def.Triggers.Item(2)
 Write-Output ('HOURLY_TYPE=' + $hourly.Type)
-Write-Output ('HOURLY_INTERVAL=' + $hourly.Repetition.Interval)
-Write-Output ('HOURLY_DURATION=' + $hourly.Repetition.Duration)
-Write-Output ('HOURLY_STOP=' + $hourly.Repetition.StopAtDurationEnd)
 Write-Output ('HOURLY_START=' + $hourly.StartBoundary)
 Write-Output ('LOGON_TYPE=' + $def.Principal.LogonType)
 Write-Output ('RUN_LEVEL=' + $def.Principal.RunLevel)
@@ -683,11 +688,10 @@ def test_windows_task_scheduler_parses_the_generated_xml_and_reads_back_what_mat
         pytest.skip(out)
     assert done.returncode == 0, f"Windows lehnt die Aufgaben-XML ab: {done.stderr.strip() or out}"
     got = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
-    assert got["TRIGGERS"] == "4" and got["TRIGGER_TYPE"] == "9"  # first: TASK_TRIGGER_LOGON, then three daily triggers
-    assert got["HOURLY_TYPE"] == "2"  # TASK_TRIGGER_DAILY
-    assert got["HOURLY_INTERVAL"] == "PT1M" and got["HOURLY_DURATION"] == "P1D" and got["HOURLY_STOP"].lower() == "false"
-    assert got["HOURLY_START"].startswith("2026-01-01T00:00:00")
-    assert got["TRIGGER_USER"].lower() == autostart.current_user().lower() and got["TRIGGER_DELAY"] == "PT1M"
+    assert got["TRIGGERS"] == "2" and got["TRIGGER_TYPE"] == "2"
+    assert got["HOURLY_TYPE"] == "2"
+    assert got["TRIGGER_START"].startswith("2026-01-01T06:00:00")
+    assert got["HOURLY_START"].startswith("2026-01-01T18:00:00")
     assert got["LOGON_TYPE"] == "3" and got["RUN_LEVEL"] == "0"  # TASK_LOGON_INTERACTIVE_TOKEN, TASK_RUNLEVEL_LUA (least privilege)
     assert got["INSTANCES"] == "2"  # TASK_INSTANCES_IGNORE_NEW
     assert got["TIME_LIMIT"] == "PT1H"
@@ -704,9 +708,9 @@ def test_the_settings_that_matter_for_a_logon_task_are_pinned_not_only_the_harml
     assert text(root, s + "RunOnlyIfNetworkAvailable") == "false"  # the program waits for the network itself
     assert text(root, s + "AllowHardTerminate") == "true" and text(root, s + "ExecutionTimeLimit") == "PT1H"
     assert text(root, s + "WakeToRun") == "false" and text(root, s + "Enabled") == "true" and text(root, s + "Hidden") == "false"
-    assert text(root, "t:Triggers/t:LogonTrigger/t:Delay") == "PT1M"
-    # logon plus the fixed daily runs at 06:00 and 18:00; missed ones run when the PC is on again
-    assert [child.tag.split("}")[1] for child in root.find("t:Triggers", NS)] == ["LogonTrigger"] + ["CalendarTrigger"] * 3
+    assert root.find("t:Triggers/t:LogonTrigger", NS) is None
+    # Two daily runs; the one-shot retry is a separate task.
+    assert [child.tag.split("}")[1] for child in root.find("t:Triggers", NS)] == ["CalendarTrigger"] * 2
     assert text(root, s + "StartWhenAvailable") == "true"
 
 
@@ -725,6 +729,6 @@ def test_shortcut_fallback_watches_due_retries_until_shortcut_removed(tmp_path, 
     assert result.ok and result.method == 'shortcut'
     script = paths.home / 'autostart-watch.ps1'
     content = script.read_text(encoding='utf-8')
-    assert 'Start-Sleep -Seconds 60' in content and 'Start-Process' in content
+    assert 'Start-Sleep -Seconds 30' in content and 'if ($runDue)' in content and 'Start-Process' in content
     assert 'Test-Path -LiteralPath' in content and 'Mutex' in content
     assert '-WindowStyle Hidden' in call[0][1] and str(script) in call[0][1]

@@ -31,6 +31,32 @@ def test_off_by_default():
     assert len(rig.google.open_tasks) == 1 and len(rig.google.events) == 1
 
 
+def test_individual_offsets_include_exam_day_and_avoid_normal_duplicate():
+    from schulsync import rules
+    r = RulesConfig(study_mode="days", study_days=(-1, -2, -3, -5, -7, 0))
+    assert rules.study_offsets(r) == [5, 3, 2, 1, 0]
+    rig = Rig(cfg=Config(rules=r))
+    rig.sync(exam_in(20))
+    got = study(rig)
+    assert sorted(got) == [0, 1, 2, 3, 5]
+    assert got[0]["due"].startswith("2026-11-03")
+
+
+def test_combined_interval_and_days_are_unioned_without_duplicates():
+    from schulsync import rules
+    r = RulesConfig(study_mode="both", study_every_days=2, study_start_days=5, study_days=(-1, -2, -5, 0))
+    assert rules.study_offsets(r) == [5, 3, 2, 1, 0]
+
+
+def test_individual_days_invalid_are_rejected():
+    from schulsync.config import parse_config
+    from schulsync.errors import ConfigError
+    import pytest
+    for values in ("[-1, 1]", "[-1, -1]", "[-61]", '["-1"]'):
+        with pytest.raises(ConfigError):
+            parse_config(f'[rules]\nstudy_days = {values}\n')
+
+
 def test_sessions_dates_titles_notes_and_no_events():
     rig = Rig(cfg=cfg())
     rig.sync(exam_in(20))  # exam 3.11.2026

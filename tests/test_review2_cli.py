@@ -123,7 +123,7 @@ def test_autostart_install_carries_home_when_it_comes_from_the_environment(tmp_p
     directory the user installed from. (Contradicts the assertion of test_autostart's
     `test_install_with_default_home_adds_no_home_option`, which pins the current behaviour.)"""
     seen: list[str] = []
-    monkeypatch.setattr(autostart, "_try_task", lambda xml: seen.append(xml))  # None = "task created"
+    monkeypatch.setattr(autostart, "_try_task", lambda xml, *args: seen.append(xml))  # None = "task created"
     monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))
     home = tmp_path / "Daten"
     monkeypatch.setenv("SCHULSYNC_HOME", str(home))

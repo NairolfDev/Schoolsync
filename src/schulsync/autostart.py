@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import getpass
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -48,13 +49,16 @@ import sys
 import tempfile
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
-from . import frozen
-from .config import ENV_HOME, RUN_TIMES, Paths
+from . import frozen, retry_state
+from .config import ENV_HOME, RUN_TIMES, Config, Paths, load_config
 
 TASK_NAME = "SchulSync"
+RETRY_TASK_NAME = "SchulSync-Retry"
+GOOGLE_TASK_NAME = "SchulSync-Google-Login"
 SHORTCUT_NAME = "SchulSync.lnk"
 RUN_ARGUMENTS = "-m schulsync run --auto"
 
@@ -101,6 +105,7 @@ def build_task_xml(
     working_dir: str,
     delay: str = "PT1M",
     time_limit: str = "PT1H",
+    run_times: tuple[str, ...] = RUN_TIMES,
 ) -> str:
     """Task-Scheduler-XML (Schema 1.2) für einen Anmeldetrigger des Benutzers. Alle Werte werden XML-maskiert.
 
@@ -125,24 +130,10 @@ def build_task_xml(
     root = ET.Element(f"{{{_NS}}}Task", {"version": "1.2"})
     info = sub(root, "RegistrationInfo")
     sub(info, "Author", user_sid_or_name)
-    sub(info, "Description", "SchulSync: gleicht Eduvidual und WebUntis nach der Windows-Anmeldung und täglich um 6 und 18 Uhr (nach Fehlern stündlich ein Wiederholversuch) mit Google Kalender und Aufgaben ab.")
+    sub(info, "Description", "SchulSync: zwei tägliche Abgleiche; bei Fehlern stündliche Wiederholung.")
 
     triggers = sub(root, "Triggers")
-    logon = sub(triggers, "LogonTrigger")
-    sub(logon, "Enabled", "true")
-    sub(logon, "UserId", user_sid_or_name)
-    sub(logon, "Delay", delay)
-    # Minütlich auf Fälligkeit prüfen; tatsächliche Wiederholungen erfolgen frühestens eine Stunde nach dem Fehler.
-    # (runner._classify) still und ohne Netzzugriff; nach einem Fehler holt er nur Fehlendes nach.
-    hourly = sub(triggers, "CalendarTrigger")
-    rep = sub(hourly, "Repetition")  # Schema-Reihenfolge: Repetition vor StartBoundary
-    sub(rep, "Interval", "PT1M")
-    sub(rep, "Duration", "P1D")
-    sub(rep, "StopAtDurationEnd", "false")
-    sub(hourly, "StartBoundary", "2026-01-01T00:00:00")
-    sub(hourly, "Enabled", "true")
-    sub(sub(hourly, "ScheduleByDay"), "DaysInterval", "1")
-    for hhmm in RUN_TIMES:  # zusätzliche feste Läufe; verpasste holt StartWhenAvailable nach dem Einschalten nach
+    for hhmm in run_times:
         cal = sub(triggers, "CalendarTrigger")
         sub(cal, "StartBoundary", f"2026-01-01T{hhmm}:00")  # ohne Zeitzone = Ortszeit, folgt Sommer-/Winterzeit
         sub(cal, "Enabled", "true")
@@ -173,6 +164,43 @@ def build_task_xml(
     if working_dir:
         sub(exec_, "WorkingDirectory", working_dir)
 
+    ET.indent(root)
+    return '<?xml version="1.0" encoding="UTF-16"?>\n' + ET.tostring(root, encoding="unicode") + "\n"
+
+
+def build_retry_task_xml(*, user_sid_or_name: str, command: str, arguments: str, working_dir: str,
+                         due: datetime) -> str:
+    """One retry at its due time; StartWhenAvailable catches it after sleep or logon."""
+    if due.tzinfo is None:
+        raise ValueError("Retry-Zeitpunkt muss eine Zeitzone haben")
+    root = ET.fromstring(build_task_xml(user_sid_or_name=user_sid_or_name, command=command,
+                                       arguments=arguments, working_dir=working_dir, run_times=()))
+    triggers = root.find(f"{{{_NS}}}Triggers")
+    assert triggers is not None
+    trigger = ET.SubElement(triggers, f"{{{_NS}}}TimeTrigger")
+    ET.SubElement(trigger, f"{{{_NS}}}StartBoundary").text = due.isoformat()
+    # Windows only applies StartWhenAvailable to a non-repeating time trigger when it has an end boundary.
+    ET.SubElement(trigger, f"{{{_NS}}}EndBoundary").text = (due + timedelta(days=365 * 50)).isoformat()
+    ET.SubElement(trigger, f"{{{_NS}}}Enabled").text = "true"
+    ET.indent(root)
+    return '<?xml version="1.0" encoding="UTF-16"?>\n' + ET.tostring(root, encoding="unicode") + "\n"
+
+
+def build_google_check_task_xml(*, user_sid_or_name: str, command: str, arguments: str, working_dir: str) -> str:
+    """An hourly credential check; this never launches a synchronisation."""
+    root = ET.fromstring(build_task_xml(user_sid_or_name=user_sid_or_name, command=command,
+                                       arguments=arguments, working_dir=working_dir, run_times=()))
+    triggers = root.find(f"{{{_NS}}}Triggers")
+    assert triggers is not None
+    trigger = ET.SubElement(triggers, f"{{{_NS}}}CalendarTrigger")
+    rep = ET.SubElement(trigger, f"{{{_NS}}}Repetition")
+    ET.SubElement(rep, f"{{{_NS}}}Interval").text = "PT1H"
+    ET.SubElement(rep, f"{{{_NS}}}Duration").text = "P1D"
+    ET.SubElement(rep, f"{{{_NS}}}StopAtDurationEnd").text = "false"
+    ET.SubElement(trigger, f"{{{_NS}}}StartBoundary").text = "2026-01-01T00:00:00"
+    ET.SubElement(trigger, f"{{{_NS}}}Enabled").text = "true"
+    day = ET.SubElement(trigger, f"{{{_NS}}}ScheduleByDay")
+    ET.SubElement(day, f"{{{_NS}}}DaysInterval").text = "1"
     ET.indent(root)
     return '<?xml version="1.0" encoding="UTF-16"?>\n' + ET.tostring(root, encoding="unicode") + "\n"
 
@@ -288,8 +316,8 @@ def _schtasks(*args: str) -> _Result:
     return _run([_system_exe("schtasks.exe"), *args], timeout=_SCHTASKS_TIMEOUT)
 
 
-def _query_task() -> _Result:
-    return _schtasks("/Query", "/TN", TASK_NAME)
+def _query_task(name: str = TASK_NAME) -> _Result:
+    return _schtasks("/Query", "/TN", name)
 
 
 # Not-found signals of schtasks. Measured on an en-US Windows 11 (not elevated): /Query of a task that does not exist ends
@@ -341,7 +369,7 @@ def _task_failure_reason(r: _Result) -> str:
 # --------------------------------------------------------------------------- Aufgabenplanung
 
 
-def _try_task(xml: str) -> str | None:
+def _try_task(xml: str, task_name: str = TASK_NAME) -> str | None:
     """Legt die Aufgabe an und prüft sie. None = Erfolg, sonst deutscher Grund für den Fehlschlag."""
     try:
         fd, name = tempfile.mkstemp(prefix="schulsync-task-", suffix=".xml")
@@ -350,7 +378,7 @@ def _try_task(xml: str) -> str | None:
     try:
         with os.fdopen(fd, "wb") as fh:
             fh.write(xml.encode("utf-16"))  # UTF-16 mit BOM, passend zur Deklaration
-        created = _schtasks("/Create", "/TN", TASK_NAME, "/XML", name, "/F")
+        created = _schtasks("/Create", "/TN", task_name, "/XML", name, "/F")
     except OSError as exc:
         return f"Die temporäre Aufgabendatei konnte nicht geschrieben werden: {_one_line(str(exc))}"
     finally:
@@ -362,11 +390,11 @@ def _try_task(xml: str) -> str | None:
         reason = _task_failure_reason(created)
         # /Create kann trotz Zeitüberschreitung/Fehler eine Aufgabe hinterlassen haben (oder eine ältere besteht noch):
         # sie muss weg, sonst starten Aufgabe UND Ausweich-Verknüpfung beim Anmelden.
-        if _query_task().returncode == 0 and _schtasks("/Delete", "/TN", TASK_NAME, "/F").returncode != 0:
+        if _query_task(task_name).returncode == 0 and _schtasks("/Delete", "/TN", task_name, "/F").returncode != 0:
             reason += f" Achtung: Die Aufgabe „{TASK_NAME}“ besteht noch und konnte nicht gelöscht werden; sie startet zusätzlich zur Verknüpfung."
         return reason
-    if _query_task().returncode != 0:
-        _schtasks("/Delete", "/TN", TASK_NAME, "/F")  # Halbfertiges aufräumen, sonst Doppelstart neben der Verknüpfung
+    if _query_task(task_name).returncode != 0:
+        _schtasks("/Delete", "/TN", task_name, "/F")  # Halbfertiges aufräumen, sonst Doppelstart neben der Verknüpfung
         return "Die Aufgabe war nach dem Anlegen nicht auffindbar."
     return None
 
@@ -395,20 +423,63 @@ def _create_shortcut(command: str, arguments: str, working_dir: str) -> str | No
     return None
 
 
-def _fallback_watch(paths: Paths, command: str, arguments: str) -> tuple[str, str]:
-    """Startup fallback: keep a hidden watcher alive while its shortcut exists."""
+def _fallback_watch(paths: Paths, command: str, arguments: str, run_times: tuple[str, ...] = RUN_TIMES,
+                    google_arguments: str | None = None) -> tuple[str, str]:
+    """Watch dates in-process; launch SchulSync only for a scheduled run or a due retry."""
     def ps(value: str) -> str:
         return "'" + value.replace("'", "''") + "'"
 
     script = paths.home / "autostart-watch.ps1"
+    times_file = paths.home / "autostart-times.json"
+    times_file.write_text(json.dumps(run_times), encoding="utf-8")
+    state_file = paths.home / "retry_state.json"
+    google_action = ""
+    if google_arguments is not None:
+        google_action = f"""
+        if ($now -ge $nextGoogle) {{
+            try {{ Start-Process -FilePath {ps(command)} -ArgumentList {ps(google_arguments)} -WorkingDirectory {ps(os.path.abspath(paths.home))} -WindowStyle Hidden -Wait }} catch {{ }}
+            $nextGoogle = $now.Date.AddHours($now.Hour + 1)
+        }}
+"""
     identity = hashlib.sha256(os.path.normcase(os.path.abspath(paths.home)).encode("utf-8")).hexdigest()[:20]
     text = f"""$ErrorActionPreference = 'Continue'
+function Test-DailyDue($last, $now, $times) {{
+    foreach ($time in $times) {{
+        $stamp = [datetime]::ParseExact($now.ToString('yyyy-MM-dd') + ' ' + $time, 'yyyy-MM-dd HH:mm', [cultureinfo]::InvariantCulture)
+        if ($stamp -gt $now) {{ $stamp = $stamp.AddDays(-1) }}
+        if ($stamp -gt $last) {{ return $true }}
+    }}
+    return $false
+}}
 $mutex = New-Object System.Threading.Mutex($false, 'Local\\SchulSync-{identity}')
 if (-not $mutex.WaitOne(0)) {{ exit 0 }}
 try {{
+    $last = Get-Date
+    $lastRetry = ''
+    $retryAgainAt = [datetime]::MinValue
+    $nextGoogle = $last.Date.AddHours($last.Hour + 1)
     while (Test-Path -LiteralPath {ps(str(shortcut_path()))}) {{
-        try {{ Start-Process -FilePath {ps(command)} -ArgumentList {ps(arguments)} -WorkingDirectory {ps(os.path.abspath(paths.home))} -WindowStyle Hidden -Wait }} catch {{ }}
-        Start-Sleep -Seconds 60
+        $now = Get-Date
+        $runDue = $false
+        try {{
+            $times = Get-Content -Raw -LiteralPath {ps(str(times_file))} | ConvertFrom-Json
+            $runDue = Test-DailyDue $last $now $times
+        }} catch {{ }}
+        try {{
+            $state = Get-Content -Raw -LiteralPath {ps(str(state_file))} | ConvertFrom-Json
+            $due = $state.next_retry
+            if (-not $due -and $state.in_progress) {{ $due = ([DateTimeOffset]::Parse($state.in_progress).AddHours(1)).ToString('o') }}
+            if ($due -and ($due -ne $lastRetry -or $now -ge $retryAgainAt) -and [DateTimeOffset]::Parse($due) -le [DateTimeOffset]::Now) {{
+                $runDue = $true; $lastRetry = $due; $retryAgainAt = $now.AddSeconds(60)
+            }}
+            if (-not $due) {{ $lastRetry = '' }}
+        }} catch {{ }}
+        if ($runDue) {{
+            try {{ Start-Process -FilePath {ps(command)} -ArgumentList {ps(arguments)} -WorkingDirectory {ps(os.path.abspath(paths.home))} -WindowStyle Hidden -Wait }} catch {{ }}
+        }}
+        {google_action}
+        $last = $now
+        Start-Sleep -Seconds 30
     }}
 }} finally {{ $mutex.ReleaseMutex(); $mutex.Dispose() }}
 """
@@ -458,14 +529,72 @@ def _home_note(paths: Paths) -> str:
     return f" Der Autostart verwendet den Datenordner {paths.home} (Option --home)."
 
 
+def _hidden_task_command(paths: Paths, command: str, arguments: str, *, filename: str = "autostart-hidden.vbs") -> tuple[str, str]:
+    """Start the console executable without ever creating a visible console window."""
+    script = paths.home / filename
+    command_line = f"{subprocess.list2cmdline([command])} {arguments}".replace('"', '""')
+    contents = f'WScript.Quit CreateObject("WScript.Shell").Run("{command_line}", 0, True)\n'
+    if not script.exists() or script.read_text(encoding="utf-16") != contents:
+        script.write_text(contents, encoding="utf-16")
+    return _system_exe("wscript.exe"), f'//B {subprocess.list2cmdline([str(script)])}'
+
+
+def _google_check_arguments(paths: Paths) -> str:
+    args = "google-auth-check --auto" if frozen.is_frozen() else "-m schulsync google-auth-check --auto"
+    return _arguments_for(args, paths)
+
+
+def _install_google_check(paths: Paths) -> str | None:
+    command, _ = default_command()
+    arguments = _google_check_arguments(paths)
+    if frozen.is_frozen():
+        command, arguments = _hidden_task_command(paths, command, arguments, filename="autostart-google-login.vbs")
+    xml = build_google_check_task_xml(user_sid_or_name=current_user(), command=command, arguments=arguments,
+                                      working_dir=os.path.abspath(paths.home))
+    return _try_task(xml, GOOGLE_TASK_NAME)
+
+
+def schedule_retry(paths: Paths, due: datetime | None) -> None:
+    """Create a one-shot retry only while autostart is enabled; remove it after success."""
+    if due is None:
+        state = _task_state(_query_task(RETRY_TASK_NAME))
+        if state == "unknown":
+            raise OSError("Status der Wiederholungsaufgabe nicht lesbar")
+        if state == "present":
+            result = _schtasks("/Delete", "/TN", RETRY_TASK_NAME, "/F")
+            if result.returncode != 0:
+                raise OSError(_task_failure_reason(result))
+        return
+    state = _task_state(_query_task())
+    if state != "present":
+        if state == "unknown" and not shortcut_path().exists():
+            raise OSError("Status der SchulSync-Aufgabe nicht lesbar")
+        return  # Startup fallback watches the saved retry state itself.
+    paths.ensure()
+    command, arguments = default_command()
+    arguments = _arguments_for(arguments, paths)
+    if frozen.is_frozen():
+        command, arguments = _hidden_task_command(paths, command, arguments)
+    xml = build_retry_task_xml(user_sid_or_name=current_user(), command=command, arguments=arguments,
+                               working_dir=os.path.abspath(paths.home), due=due)
+    error = _try_task(xml, RETRY_TASK_NAME)
+    if error:
+        raise OSError(error)
+
+
 def install(paths: Paths) -> AutostartStatus:
     """Richtet den Autostart ein: erst Aufgabenplanung, bei jedem Fehlschlag die Startup-Verknüpfung."""
     paths.ensure()
     note = _home_note(paths)  # Arbeitsverzeichnis der Aufgabe muss existieren
+    run_times = (load_config(paths.config) if paths.config.exists() else Config()).schedule.run_times
     command, arguments = default_command()
     arguments = _arguments_for(arguments, paths)
+    task_command, task_arguments = command, arguments
+    if frozen.is_frozen():
+        task_command, task_arguments = _hidden_task_command(paths, command, arguments)
     xml = build_task_xml(
-        user_sid_or_name=current_user(), command=command, arguments=arguments, working_dir=os.path.abspath(paths.home)
+        user_sid_or_name=current_user(), command=task_command, arguments=task_arguments,
+        working_dir=os.path.abspath(paths.home), run_times=run_times
     )
     reason = _try_task(xml)
     if reason is None:
@@ -476,15 +605,26 @@ def install(paths: Paths) -> AutostartStatus:
             if stale
             else ""
         )
+        try:
+            saved = retry_state.read(paths)
+            due = saved.get("next_retry")
+            if not due and saved.get("in_progress"):
+                due = (datetime.fromisoformat(saved["in_progress"]).astimezone(timezone.utc) + timedelta(hours=1)).isoformat()
+            schedule_retry(paths, datetime.fromisoformat(due) if due else None)
+        except (OSError, ValueError, TypeError) as exc:
+            warning += f" Wiederholung konnte nicht eingeplant werden: {_one_line(str(exc))}"
+        google_error = _install_google_check(paths)
+        if google_error:
+            warning += f" Google-Login-Prüfung konnte nicht eingerichtet werden: {google_error}"
         return AutostartStatus(
             "task",
             f"Autostart über die Windows-Aufgabenplanung eingerichtet (Aufgabe „{TASK_NAME}“). "
-            f"SchulSync startet etwa eine Minute nach Ihrer Anmeldung, im Benutzerkonto und ohne Administratorrechte.{warning}{note}",
-            True,
+            f"SchulSync startet täglich um {run_times[0]} und {run_times[1]} Uhr, bei Fehlern zusätzlich nach einer Stunde.{warning}{note}",
+            google_error is None,
         )
 
     try:
-        watch_command, watch_arguments = _fallback_watch(paths, command, arguments)
+        watch_command, watch_arguments = _fallback_watch(paths, command, arguments, run_times, _google_check_arguments(paths))
         problem = _create_shortcut(watch_command, watch_arguments, os.path.abspath(paths.home))
     except OSError as exc:
         problem = f"Der Hintergrund-Wächter konnte nicht eingerichtet werden: {_one_line(str(exc))}"
@@ -492,7 +632,7 @@ def install(paths: Paths) -> AutostartStatus:
         return AutostartStatus(
             "shortcut",
             f"Autostart über eine Verknüpfung im Startup-Ordner eingerichtet ({shortcut_path()}). {reason} "
-            "Ein versteckter Hintergrund-Wächter prüft minütlich auf fällige Läufe. "
+            "Ein versteckter Hintergrund-Wächter startet SchulSync nur zu den eingestellten Zeiten und bei fälligen Wiederholungen. "
             "Entfernen: 'schulsync autostart remove'." + note,
             True,
         )
@@ -509,6 +649,15 @@ def remove() -> AutostartStatus:
     """Entfernt Aufgabe UND Verknüpfung, soweit vorhanden. Idempotent: Fehlendes ist kein Fehler."""
     removed: list[str] = []
     errors: list[str] = []
+
+    for name, label in ((RETRY_TASK_NAME, "Wiederholungsaufgabe"), (GOOGLE_TASK_NAME, "Google-Login-Prüfung")):
+        extra_state = _task_state(_query_task(name))
+        if extra_state != "absent":
+            deleted = _schtasks("/Delete", "/TN", name, "/F")
+            if deleted.returncode != 0 and not _is_not_found(deleted):
+                errors.append(f"{label} konnte nicht entfernt werden: {_one_line(deleted.text)}")
+            elif deleted.returncode == 0:
+                removed.append(label)
 
     query = _query_task()
     state = _task_state(query)
@@ -558,7 +707,7 @@ def status() -> AutostartStatus:
         )
         return AutostartStatus(
             "task",
-            f"Autostart ist über die Windows-Aufgabenplanung eingerichtet (Aufgabe „{TASK_NAME}“, Start etwa eine Minute nach der Anmeldung).{extra}",
+            f"Autostart ist über die Windows-Aufgabenplanung eingerichtet (Aufgabe „{TASK_NAME}“, zwei tägliche Läufe).{extra}",
             True,
         )
     unknown_note = (

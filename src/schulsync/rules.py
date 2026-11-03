@@ -123,9 +123,11 @@ def study_parent_uid(item: SourceItem) -> str:
 
 def study_offsets(cfg: RulesConfig) -> list[int]:
     """Lerntermine vor der Prüfung ohne die bereits vorhandene normale Lernaufgabe."""
-    if cfg.study_every_days <= 0:
-        return []
-    return [d for d in range(cfg.study_start_days, 0, -cfg.study_every_days) if d != cfg.exam_lead_days]
+    days = {-day for day in cfg.study_days} if cfg.study_mode in ("days", "both") else set()
+    if cfg.study_mode in ("interval", "both") and cfg.study_every_days > 0:
+        days.update(range(cfg.study_start_days, 0, -cfg.study_every_days))
+    days.discard(cfg.exam_lead_days)
+    return sorted(days, reverse=True)
 
 
 def study_items(exams: list[SourceItem], cfg: RulesConfig) -> list[SourceItem]:

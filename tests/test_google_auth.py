@@ -343,6 +343,15 @@ def test_authorize_interactive_defaults_open_browser(flow_spy):
     assert flow_spy.calls[0]["open_browser"] is True and flow_spy.calls[0]["port"] == 0
 
 
+def test_authorize_background_prefers_chrome_and_falls_back(flow_spy, monkeypatch):
+    monkeypatch.setattr(ga, '_chrome_executable', lambda: r'C:\Chrome\chrome.exe')
+    ga.authorize_interactive(CLIENT_JSON, prefer_chrome=True)
+    assert flow_spy.calls[-1]['browser'] == 'schulsync-chrome'
+    monkeypatch.setattr(ga, '_chrome_executable', lambda: None)
+    ga.authorize_interactive(CLIENT_JSON, prefer_chrome=True)
+    assert 'browser' not in flow_spy.calls[-1]
+
+
 def test_authorize_not_all_scopes_granted(flow_spy):
     flow_spy.result = make_creds(granted_scopes=[ga.SCOPES[0]])
     with pytest.raises(GoogleAuthError) as ei:

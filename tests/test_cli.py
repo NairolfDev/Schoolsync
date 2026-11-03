@@ -196,7 +196,7 @@ def all_logs(paths: Paths) -> str:
 
 def test_version_and_help_are_german(env, io):
     assert main(["--version"], env=env) == 0
-    assert "SchulSync 2.0.0" in io.out
+    assert "SchulSync 2.0.1" in io.out
     assert main(["--help"], env=env) == 0
     for word in ("Aufruf:", "Befehle:", "Optionen:", "setup", "run", "preview", "check", "status", "restore", "report", "autostart", "--home"):
         assert word in io.out
@@ -866,7 +866,8 @@ def world(env, io, paths, store, tmp_path, autostart_fake) -> SetupWorld:
 
 
 def happy_answers(w: SetupWorld, *, autostart: str = "j") -> None:
-    w.io.answers.extend([f'"{w.client_file}"', "schueler.edu", "", "schueler.untis", "", autostart])
+    from schulsync.settings import SETTINGS
+    w.io.answers.extend([f'"{w.client_file}"', "schueler.edu", "", "schueler.untis", ""] + [""] * len(SETTINGS) + [autostart])
     w.io.secret_answers.extend([PW_EDU, PW_UNTIS])
 
 
@@ -924,7 +925,8 @@ def test_setup_is_idempotent_and_keeps_values_on_empty_input(world, paths, store
     autostart_fake.calls.clear()
 
     # second run: everything empty = keep; do not re-authorize, do not re-test, do not ask for autostart (installed)
-    w.io.answers.extend(["", "", "", "n", "", "n"])  # client file, re-login?, user name, test?, user name, test?
+    from schulsync.settings import SETTINGS
+    w.io.answers.extend(["", "", "", "n", "", "n"] + [""] * len(SETTINGS))  # keep existing settings
     w.io.secret_answers.extend(["", ""])
     assert main(["setup"], env=w.env) == 0
     assert w.authorized == [] and w.checked == []
@@ -940,7 +942,8 @@ def test_setup_rerun_can_replace_a_single_value(world, paths, store):
     w = world
     happy_answers(w)
     main(["setup"], env=w.env)
-    w.io.answers.extend(["", "", "", "n", "neuer.untis", "n"])
+    from schulsync.settings import SETTINGS
+    w.io.answers.extend(["", "", "", "n", "neuer.untis", "n"] + [""] * len(SETTINGS))
     w.io.secret_answers.extend(["", "neues-dummy-passwort"])
     assert main(["setup"], env=w.env) == 0
     assert store.get("eduvidual_password") == PW_EDU and store.get("webuntis_password") == "neues-dummy-passwort"
@@ -954,7 +957,8 @@ def test_setup_expired_google_login_triggers_reauthorization_automatically(world
     assert main(["setup"], env=w.env) == 0
     w.authorized.clear()
     monkeypatch.setattr(cli.google_auth, "load_credentials", lambda *a, **k: (_ for _ in ()).throw(GoogleAuthError("Die Google-Anmeldung ist abgelaufen.", hint="x")))
-    w.io.answers.extend(["", "", "n", "", "n"])
+    from schulsync.settings import SETTINGS
+    w.io.answers.extend(["", "", "n", "", "n"] + [""] * len(SETTINGS))
     w.io.secret_answers.extend(["", ""])
     assert main(["setup"], env=w.env) == 0
     assert len(w.authorized) == 1 and "nicht mehr gültig" in w.io.out
@@ -1146,7 +1150,8 @@ def test_setup_uses_a_custom_example_file(world, paths, tmp_path):
 
 def test_setup_autostart_declined_by_default(world, autostart_fake):
     w = world
-    w.io.answers.extend([str(w.client_file), "schueler.edu", "n", "schueler.untis", "n", ""])
+    from schulsync.settings import SETTINGS
+    w.io.answers.extend([str(w.client_file), "schueler.edu", "n", "schueler.untis", "n"] + [""] * len(SETTINGS) + [""])
     w.io.secret_answers.extend([PW_EDU, PW_UNTIS])
     assert main(["setup"], env=w.env) == 0
     assert [c[0] for c in autostart_fake.calls] == ["status"] and "autostart install" in w.io.out
@@ -1154,8 +1159,9 @@ def test_setup_autostart_declined_by_default(world, autostart_fake):
 
 def test_setup_autostart_failure_text_is_shown(world, autostart_fake):
     w = world
+    from schulsync.settings import SETTINGS
     autostart_fake.ok = False
-    w.io.answers.extend([str(w.client_file), "schueler.edu", "n", "schueler.untis", "n", "j"])
+    w.io.answers.extend([str(w.client_file), "schueler.edu", "n", "schueler.untis", "n"] + [""] * len(SETTINGS) + ["j"])
     w.io.secret_answers.extend([PW_EDU, PW_UNTIS])
     assert main(["setup"], env=w.env) == 0
     assert "Autostart eingerichtet (Fake)." in w.io.out

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "schulsync"
-version = "2.0.0"
+version = "2.0.1"
 description = "SchulSync: synchronisiert Eduvidual und WebUntis nach Google Kalender und Google Tasks (regelbasiert, ohne KI)"
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -19,6 +19,7 @@ dependencies = [
     "oauthlib>=3.2",
     "requests>=2.31",
     "tzdata>=2024.1",
+    "keyring>=25; sys_platform == 'linux'",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +31,9 @@ schulsync = "schulsync.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+schulsync = ["config.example.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

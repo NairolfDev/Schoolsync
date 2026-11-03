@@ -31,6 +31,8 @@ class Sys:
         args = [str(a) for a in args]
         assert not kw.get("shell") and kw.get("timeout")
         op = args[1].lower()
+        if "SchulSync-Retry" in args or "SchulSync-Google-Login" in args:
+            return subprocess.CompletedProcess(args, 1, stdout=NOT_FOUND_EN, stderr=b"")
         self.calls.append(op)
         result = {"/query": self.query, "/delete": self.delete}[op]
         if isinstance(result, Exception):
