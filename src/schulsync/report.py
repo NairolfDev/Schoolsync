@@ -261,6 +261,7 @@ _KIND_NAME = {
     m.Kind.HOMEWORK: "Hausaufgabe",
     m.Kind.EXAM: "Prüfung",
     m.Kind.CANCELLATION: "Unterrichtsentfall",
+    m.Kind.STUDY: "Lernplan",
 }
 _TARGET_NAME = {m.Target.CALENDAR: "Kalender", m.Target.TASKS: "Aufgabenliste"}
 _ACTION_NAME = {

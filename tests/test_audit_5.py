@@ -86,8 +86,14 @@ def test_a_retry_report_of_the_same_day_still_tells_what_was_already_taken_over(
 
     assert second.report_path == first.report_path  # the day's single report file
     html = read_report(second)
-    assert len(world.rec.opened) == 1  # same problem: no second tab, so this overwritten file is all the user can read later
+    assert len(world.rec.opened) == 0  # the first two failures are silent
     assert ASSIGNMENT.title in html, "der Bericht des zweiten Starts nennt die schon uebernommene Eduvidual-Abgabe nicht mehr"
+    third = world.start(at=at(2026, 10, 14, 10, 0))
+    assert len(world.rec.opened) == 1
+    assert ASSIGNMENT.title in read_report(third)
+    fourth = world.start(at=at(2026, 10, 14, 11, 0))
+    assert len(world.rec.opened) == 1  # same problem: no extra tab
+    assert ASSIGNMENT.title in read_report(fourth)
 
 
 # --------------------------------------------------------------------------- 9: 'saubere Abhaengigkeiten'

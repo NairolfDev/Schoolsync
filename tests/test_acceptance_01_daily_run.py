@@ -157,7 +157,7 @@ def test_failed_source_is_retried_at_the_next_logon_and_the_finished_source_is_n
     assert first.report.sources[WEB].status == SourceStatus.FAILED
     assert _fetches(world) == (1, attempts)
     assert len(world.google.events) == 1 and len(world.google.tasks) == 1  # the Eduvidual part was taken over
-    assert world.rec.opened == [first.report_path]
+    assert world.rec.opened == []
     today = TODAY
     with world.store() as st:  # day success is kept per source: one done, one not
         assert st.day_done(today, EDU) and not st.day_done(today, WEB)
@@ -166,9 +166,9 @@ def test_failed_source_is_retried_at_the_next_logon_and_the_finished_source_is_n
 
     assert second.exit_code == 0 and not second.silent
     assert second.report.sources[WEB].status == SourceStatus.SUCCESS
-    assert _fetches(world) == (1, attempts + 1)  # Eduvidual was NOT fetched again
+    assert _fetches(world) == (2, attempts + 1)  # the whole run is retried
     assert len(world.google.events) == 4 and len(world.google.tasks) == 3
-    assert len(world.rec.opened) == 1  # success opens no browser page
+    assert len(world.rec.opened) == 0  # success opens no browser page
     with world.store() as st:
         assert st.day_done(today, EDU) and st.day_done(today, WEB)
     assert world.start(at=at(2026, 10, 14, 17, 0)).silent  # now the day is complete
@@ -184,7 +184,7 @@ def test_a_permanently_rejected_google_write_fails_that_change_without_retry_and
     assert first.exit_code == 1 and first.report.status == OverallStatus.PARTIAL
     assert world.google.calls["insert_event"] == 2  # each event tried once: a permanent 400 is not retried
     assert len(world.google.events) == 1
-    assert len(world.rec.opened) == 1
+    assert len(world.rec.opened) == 0
 
     second = world.start(at=at(2026, 10, 14, 13, 0))
 
@@ -222,7 +222,7 @@ def test_when_all_attempts_fail_the_error_is_reported_once_after_the_retries_not
     assert out.exit_code == 1 and out.report.status == OverallStatus.FAILED
     assert _fetches(world) == (attempts, attempts)  # exactly max_attempts per source, never endless
     assert sorted(world.rec.sleeps) == sorted([5.0, 20.0, 45.0] * 2)
-    assert world.rec.opened == [out.report_path]  # one browser page for the whole run
+    assert world.rec.opened == []  # the first failed run remains quiet
     assert world.google.write_log == []
     assert "Internetverbindung prüfen" in read_report(out)  # sensible next step for a connection problem
 
@@ -241,7 +241,7 @@ def test_the_run_has_a_hard_time_limit(world: World):
     assert out.exit_code == 1
     assert len(world.webuntis.calls) < world.config.retry.max_attempts
     assert world.clock.monotonic() - started <= 20.0 + 1e-6
-    assert len(world.rec.opened) == 1
+    assert len(world.rec.opened) == 0
 
 
 def test_missing_internet_right_after_logon_is_waited_for_and_then_the_run_proceeds(world: World):
@@ -290,21 +290,17 @@ def test_rejected_credentials_are_not_retried_and_block_automatic_runs_until_a_m
     assert len(world.eduvidual.calls) == 1 and world.rec.sleeps == []  # no retry, no waiting
     assert "Anmeldedaten der Schulplattform prüfen" in read_report(first)
     with world.store() as st:
-        assert st.is_auth_blocked(EDU) and not st.is_auth_blocked(WEB)
+        assert not st.is_auth_blocked(EDU) and not st.is_auth_blocked(WEB)
 
-    world.start(at=at(2026, 10, 14, 12, 0))  # later logon the same day
-    world.start(at=at(2026, 10, 15, 7, 50))  # and the next day
-    assert len(world.eduvidual.calls) == 1  # never retried automatically while blocked
-
-    world.eduvidual.login_ok()  # password fixed
-    manual = world.start(RunMode.MANUAL, at=at(2026, 10, 15, 9, 0))
-    assert len(world.eduvidual.calls) == 2 and manual.exit_code == 0
-    with world.store() as st:
-        assert not st.is_auth_blocked(EDU)
+    assert world.start(at=at(2026, 10, 14, 8, 30)).silent
+    assert len(world.eduvidual.calls) == 1
+    world.eduvidual.login_ok()  # password fixed before the next hourly attempt
+    second = world.start(at=at(2026, 10, 14, 9, 0))
+    assert len(world.eduvidual.calls) == 2 and second.exit_code == 0
     assert len(world.google.events) == 4
+    world.start(at=at(2026, 10, 15, 7, 50))
+    assert len(world.eduvidual.calls) == 3
 
-    world.start(at=at(2026, 10, 16, 7, 50))
-    assert len(world.eduvidual.calls) == 3  # automatic runs read the source again
 
 
 # --------------------------------------------------------------------------- days without logon, process lock

@@ -88,6 +88,7 @@ class TestAuthBlockOnlyForRejectedCredentials:
         env.run()
         assert not env.state.is_auth_blocked(WU)
         env.adapters[WU].login_ok()
+        env.advance(hours=1)
         out = env.run()  # next logon of the day: the healed source is simply fetched again
         assert out.report.sources[WU].status == SourceStatus.SUCCESS
 
@@ -105,20 +106,21 @@ class TestTabFlood:
         env.run(paths=bad, state=None)
         env.advance(hours=1)
         env.run(paths=bad, state=None)
-        assert len(env.opened) == 2 and all(p.is_file() for p in env.opened)
+        assert env.opened == []
+        env.advance(hours=1)
+        env.run(paths=bad, state=None)
+        assert len(env.opened) == 1 and all(p.is_file() for p in env.opened)
 
     def test_a_problem_that_was_already_shown_today_does_not_open_a_third_tab_after_another_problem(self, env):
         """A, B, A on the same day: A was shown already (ANFORDERUNGEN 8, wiederholte identische Fehler)."""
         env.set_items(S.assignment(), S.exam())
-        env.adapters[WU].raise_next(TransientError("Zeitüberschreitung."), times=4)  # problem A
-        env.run()
-        env.advance(hours=1)
-        env.adapters[WU].raise_next(RuntimeError("Parserfehler"))  # problem B
-        env.run()
-        env.advance(hours=1)
-        env.adapters[WU].raise_next(TransientError("Zeitüberschreitung."), times=4)  # A again
-        env.run()
+        for error in (TransientError("Zeitüberschreitung."), RuntimeError("Parserfehler"), TransientError("Zeitüberschreitung.")):
+            for _ in range(3):
+                env.adapters[WU].raise_next(error, times=4 if isinstance(error, TransientError) else 1)
+                env.run()
+                env.advance(hours=1)
         assert len(env.opened) == 2
+
 
 
 class TestHostileNoticeText:

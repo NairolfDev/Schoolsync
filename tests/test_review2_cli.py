@@ -141,7 +141,7 @@ def test_run_auto_reports_a_failure_the_runner_could_not_report(env, io, paths, 
     paths.lock.mkdir()  # a directory in place of the lock file: os.open raises PermissionError
     env.build_deps = lambda p, c, s: make_deps(p, c)
     assert main(["run", "--auto"], env=env) != 0
-    assert len(opened) == 1 and opened[0].is_file()
+    assert opened == [] and (paths.reports / "bericht-2026-10-14.html").is_file()
 
 
 # --------------------------------------------------------------------------- broken config value types
@@ -235,4 +235,4 @@ def test_run_auto_with_a_config_value_of_the_wrong_type_still_opens_the_failure_
     error handler itself dies ('Fehlerbehandlung fehlgeschlagen') and nothing is shown."""
     paths.config.write_text(BAD_CONFIG, encoding="utf-8")
     assert main(["run", "--auto"], env=env) in (1, 2)
-    assert len(opened) == 1 and opened[0].is_file()
+    assert opened == [] and (paths.reports / "bericht-2026-10-14.html").is_file()

@@ -29,6 +29,7 @@ class Kind(StrEnum):
     HOMEWORK = "homework"  # WebUntis: Hausaufgabe
     EXAM = "exam"  # WebUntis: Prüfung/Schularbeit
     CANCELLATION = "cancellation"  # WebUntis: Unterrichtsentfall
+    STUDY = "study"  # abgeleitet aus einer Prüfung (Lernplan): nur Google-Task, Kennung "<exam-id>#lern<d>"
 
 
 class Category(StrEnum):
@@ -45,6 +46,7 @@ KIND_CATEGORY: Mapping[Kind, Category] = {
     Kind.HOMEWORK: Category.HOMEWORK,
     Kind.EXAM: Category.EXAMS,
     Kind.CANCELLATION: Category.CANCELLATIONS,
+    Kind.STUDY: Category.EXAMS,
 }
 
 
@@ -280,6 +282,7 @@ class SourceItem:
             " ".join(self.title.split()).casefold(),
             " ".join((self.course or "").split()).casefold(),
             _enc_when(self.when.start) or "",
+            *([self.source_id] if self.kind == Kind.STUDY else []),  # same exam, several sessions: not duplicates
         ]
         return sha256_hex("\x1f".join(parts))
 

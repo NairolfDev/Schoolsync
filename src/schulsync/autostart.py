@@ -40,6 +40,7 @@ WScript.Shell). Eine Verknüpfung kann den Start NICHT verzögern. Das ist unkri
 from __future__ import annotations
 
 import getpass
+import hashlib
 import os
 import re
 import subprocess
@@ -124,13 +125,23 @@ def build_task_xml(
     root = ET.Element(f"{{{_NS}}}Task", {"version": "1.2"})
     info = sub(root, "RegistrationInfo")
     sub(info, "Author", user_sid_or_name)
-    sub(info, "Description", "SchulSync: gleicht Eduvidual und WebUntis nach der Windows-Anmeldung und täglich um 6 und 18 Uhr mit Google Kalender und Aufgaben ab.")
+    sub(info, "Description", "SchulSync: gleicht Eduvidual und WebUntis nach der Windows-Anmeldung und täglich um 6 und 18 Uhr (nach Fehlern stündlich ein Wiederholversuch) mit Google Kalender und Aufgaben ab.")
 
     triggers = sub(root, "Triggers")
     logon = sub(triggers, "LogonTrigger")
     sub(logon, "Enabled", "true")
     sub(logon, "UserId", user_sid_or_name)
     sub(logon, "Delay", delay)
+    # Minütlich auf Fälligkeit prüfen; tatsächliche Wiederholungen erfolgen frühestens eine Stunde nach dem Fehler.
+    # (runner._classify) still und ohne Netzzugriff; nach einem Fehler holt er nur Fehlendes nach.
+    hourly = sub(triggers, "CalendarTrigger")
+    rep = sub(hourly, "Repetition")  # Schema-Reihenfolge: Repetition vor StartBoundary
+    sub(rep, "Interval", "PT1M")
+    sub(rep, "Duration", "P1D")
+    sub(rep, "StopAtDurationEnd", "false")
+    sub(hourly, "StartBoundary", "2026-01-01T00:00:00")
+    sub(hourly, "Enabled", "true")
+    sub(sub(hourly, "ScheduleByDay"), "DaysInterval", "1")
     for hhmm in RUN_TIMES:  # zusätzliche feste Läufe; verpasste holt StartWhenAvailable nach dem Einschalten nach
         cal = sub(triggers, "CalendarTrigger")
         sub(cal, "StartBoundary", f"2026-01-01T{hhmm}:00")  # ohne Zeitzone = Ortszeit, folgt Sommer-/Winterzeit
@@ -384,6 +395,29 @@ def _create_shortcut(command: str, arguments: str, working_dir: str) -> str | No
     return None
 
 
+def _fallback_watch(paths: Paths, command: str, arguments: str) -> tuple[str, str]:
+    """Startup fallback: keep a hidden watcher alive while its shortcut exists."""
+    def ps(value: str) -> str:
+        return "'" + value.replace("'", "''") + "'"
+
+    script = paths.home / "autostart-watch.ps1"
+    identity = hashlib.sha256(os.path.normcase(os.path.abspath(paths.home)).encode("utf-8")).hexdigest()[:20]
+    text = f"""$ErrorActionPreference = 'Continue'
+$mutex = New-Object System.Threading.Mutex($false, 'Local\\SchulSync-{identity}')
+if (-not $mutex.WaitOne(0)) {{ exit 0 }}
+try {{
+    while (Test-Path -LiteralPath {ps(str(shortcut_path()))}) {{
+        try {{ Start-Process -FilePath {ps(command)} -ArgumentList {ps(arguments)} -WorkingDirectory {ps(os.path.abspath(paths.home))} -WindowStyle Hidden -Wait }} catch {{ }}
+        Start-Sleep -Seconds 60
+    }}
+}} finally {{ $mutex.ReleaseMutex(); $mutex.Dispose() }}
+"""
+    script.write_text(text, encoding="utf-8-sig")
+    executable = _system_exe("WindowsPowerShell", "v1.0", "powershell.exe")
+    args = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File " + subprocess.list2cmdline([str(script)])
+    return executable, args
+
+
 def _remove_shortcut() -> str | None:
     """None = entfernt oder nicht vorhanden, sonst Fehlertext."""
     try:
@@ -449,12 +483,16 @@ def install(paths: Paths) -> AutostartStatus:
             True,
         )
 
-    problem = _create_shortcut(command, arguments, os.path.abspath(paths.home))
+    try:
+        watch_command, watch_arguments = _fallback_watch(paths, command, arguments)
+        problem = _create_shortcut(watch_command, watch_arguments, os.path.abspath(paths.home))
+    except OSError as exc:
+        problem = f"Der Hintergrund-Wächter konnte nicht eingerichtet werden: {_one_line(str(exc))}"
     if problem is None:
         return AutostartStatus(
             "shortcut",
             f"Autostart über eine Verknüpfung im Startup-Ordner eingerichtet ({shortcut_path()}). {reason} "
-            "Hinweis: Eine Startverzögerung ist mit einer Verknüpfung nicht möglich (Verzögerung = 0); SchulSync wartet selbst auf das Netzwerk. "
+            "Ein versteckter Hintergrund-Wächter prüft minütlich auf fällige Läufe. "
             "Entfernen: 'schulsync autostart remove'." + note,
             True,
         )

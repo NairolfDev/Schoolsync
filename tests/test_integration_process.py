@@ -135,7 +135,7 @@ def box(tmp_path) -> Sandbox:
         (["restore"], 2, ["Fehler: Konfigurationsdatei fehlt"]),
         (["restore", "eduvidual:assignment:assign:1"], 2, ["Fehler: Konfigurationsdatei fehlt"]),
         (["report"], 1, ["noch keinen Bericht"]),
-        (["run"], 2, ["Fehler: Konfigurationsdatei fehlt"]),
+        (["run"], 2, []),  # first failed run is silent; details are stored in the report
     ],
     ids=lambda v: " ".join(v) if isinstance(v, list) else None,
 )
@@ -165,12 +165,26 @@ def test_run_auto_without_config_writes_a_failed_report_and_opens_it_once_per_da
     assert "Fehlgeschlagen" in html_text and "Konfigurationsdatei fehlt" in html_text and "schulsync setup" in html_text
     low = html_text.lower()
     assert "<script" not in low and "<link" not in low and ' src="http' not in low  # self-contained, no external resources
-    assert box.opened() == [reports[0].as_uri()]  # the browser opener was asked exactly once (the stub recorded the file:// URI)
+    assert box.opened() == []  # first failure stays silent
     assert "Konfigurationsdatei fehlt" in box.log_text() and "Traceback" not in box.log_text()
 
-    second = box.run("run", "--auto", exe=exe)  # same day, same error: report refreshed, no second tab
+    # The retry becomes due one hour after the previous failure.
+    import json
+    def make_retry_due():
+        state_file = box.home / "retry_state.json"
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        state["next_retry"] = "2000-01-01T00:00:00+00:00"
+        state_file.write_text(json.dumps(state), encoding="utf-8")
+    make_retry_due()
+    second = box.run("run", "--auto", exe=exe)
     assert second.returncode == 2
-    assert box.reports() == reports and box.opened() == [reports[0].as_uri()]
+    assert box.reports() == reports and box.opened() == []
+    make_retry_due()
+    third = box.run("run", "--auto", exe=exe)
+    assert third.returncode == 2 and box.opened() == [reports[0].as_uri()]
+    make_retry_due()
+    fourth = box.run("run", "--auto", exe=exe)
+    assert fourth.returncode == 2 and box.opened() == [reports[0].as_uri()]
     box.assert_profile_untouched()
 
 
@@ -192,7 +206,7 @@ def test_run_auto_with_a_broken_config_reports_it_too(box):
     proc = box.run("run", "--auto")
     assert proc.returncode == 2 and proc.stdout == ""
     assert len(box.reports()) == 1 and "kein gültiges TOML" in box.reports()[0].read_text(encoding="utf-8")
-    assert box.opened() == [box.reports()[0].as_uri()]
+    assert box.opened() == []  # first failure stays silent
 
 
 # --------------------------------------------------------------------------- a valid config but no credentials yet (fresh install)
@@ -212,10 +226,10 @@ def test_fresh_install_with_config_but_without_credentials(box):
 
     run = box.run("run")  # manual: no network wait, both sources fail at the credential step, nothing is written anywhere
     assert run.returncode == 1, run.stdout + run.stderr
-    assert "Fehlgeschlagen" in run.stdout and "kein Benutzername" in run.stdout and "schulsync setup --eduvidual" in run.stdout
+    assert run.stdout == ""  # the first failed run stays silent
     (report,) = box.reports()
     assert "schulsync setup --webuntis" in report.read_text(encoding="utf-8")
-    assert box.opened() == [report.as_uri()]
+    assert box.opened() == []
 
     preview = box.run("preview")  # never writes or books anything; its own report file, plus the opener stub
     assert preview.returncode == 1, preview.stdout + preview.stderr

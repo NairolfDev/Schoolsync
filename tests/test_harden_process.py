@@ -84,7 +84,7 @@ def test_a_hung_run_is_ended_by_the_watchdog_with_exit_code_3_and_the_lock_is_re
     assert proc.returncode == 3, (proc.stdout, proc.stderr)
     assert time.monotonic() - started < 100  # it did not sleep the 120 s of the hung call
     lines = marker.read_text(encoding="utf-8").splitlines()
-    assert lines[0] == "LOCKED" and lines[1].startswith("OPENED bericht-") and len(lines) == 2  # the report was opened once
+    assert lines == ["LOCKED"]  # first failure is recorded but not opened
     reports = list((home / "reports").glob("bericht-*.html"))
     assert len(reports) == 1
     html = reports[0].read_text(encoding="utf-8")

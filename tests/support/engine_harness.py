@@ -6,6 +6,7 @@ Everything is deterministic: time, sleeping, monotonic clock, browser and networ
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -74,10 +75,14 @@ class Rig:
 class Env:
     """Runner-level rig. `run()` builds `Deps` from the injected fakes; the clock, sleep and browser are recorded."""
 
-    def __init__(self, tmp_path: Path, now: datetime = NOW, cfg: Config | None = None, **google_kw: Any) -> None:
+    def __init__(
+        self, tmp_path: Path, now: datetime = NOW, cfg: Config | None = None, failures_before_report: int | None = 1, **google_kw: Any
+    ) -> None:
         self.paths = Paths(tmp_path / "SchulSync")
         self.paths.ensure()
         self.cfg = cfg or Config(rules=RulesConfig(window_days=21, assignment_lead_days=3, assignment_lead_hours=0, assignment_calendar=True))
+        if failures_before_report is not None:  # legacy runner tests expect a problem to show at once; None = use cfg as is
+            self.cfg = replace(self.cfg, retry=replace(self.cfg.retry, failures_before_report=failures_before_report))
         self.now = now
         self.mono = 0.0
         self.sleeps: list[float] = []

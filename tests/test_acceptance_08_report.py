@@ -76,7 +76,7 @@ def test_a_partial_run_opens_the_report_once_and_it_tells_what_the_user_needs(wo
     out = world.start(at=DAY1)
 
     assert out.exit_code == 1
-    assert world.rec.opened == [out.report_path] and out.report_path.is_file()
+    assert world.rec.opened == [] and out.report_path.is_file()
     assert out.report_path.parent == world.paths.reports  # a local, self-contained file
     html = read_report(out)
     assert html.startswith("<!DOCTYPE html>") and 'lang="de"' in html
@@ -114,19 +114,19 @@ def test_identical_problems_open_one_tab_per_day_but_the_stored_report_is_refres
     assert "10:00:00" in read_report(third) and "09:00:00" not in read_report(third)  # ... always the latest content
 
     tomorrow = world.start(at=at(2026, 10, 15, 8, 0))  # a new day, the problem persists
-    assert world.rec.opened == [first.report_path, tomorrow.report_path]
+    assert world.rec.opened == [first.report_path]  # the same continuous error is not reported again
 
 
 def test_a_different_problem_on_the_same_day_opens_the_report_again(world: World):
     world.load_standard()
     fail_adapter(world.webuntis)
-    world.start(at=at(2026, 10, 14, 8, 0))
+    for hour in (8, 9, 10):
+        world.start(at=at(2026, 10, 14, hour, 0))
     assert len(world.rec.opened) == 1
     heal_adapter(world.webuntis)
-    world.webuntis.login_fails(ErrorInfo("auth", "Anmeldung abgelehnt (Test)."))  # not the same error any more
-
-    world.start(at=at(2026, 10, 14, 9, 0))
-
+    world.webuntis.login_fails(ErrorInfo("auth", "Anmeldung abgelehnt (Test)."))
+    for hour in (11, 12, 13):
+        world.start(at=at(2026, 10, 14, hour, 0))
     assert len(world.rec.opened) == 2
 
 
@@ -142,16 +142,15 @@ def test_if_the_browser_cannot_be_opened_the_report_stays_and_its_place_is_logge
     caplog.set_level(logging.DEBUG)
     world.load_standard()
     fail_adapter(world.webuntis)
-    world.rec.open_result = False  # the opener reports failure
-
-    out = world.start(at=at(2026, 10, 14, 8, 0))
-
+    world.rec.open_result = False
+    for hour in (8, 9):
+        world.start(at=at(2026, 10, 14, hour, 0), notify=lambda *args: False)
+    out = world.start(at=at(2026, 10, 14, 10, 0), notify=lambda *args: False)
     assert out.exit_code == 1 and out.report_path.is_file()
     logged = caplog.text + all_log_text(world.paths)
-    assert out.report_path.name in logged, "the place of the report must be logged when opening fails"
-
+    assert out.report_path.name in logged
     world.rec.open_result = True
-    world.start(at=at(2026, 10, 14, 9, 0))  # a failed opening is not "already shown today"
+    world.start(at=at(2026, 10, 14, 11, 0), notify=lambda *args: False)
     assert len(world.rec.opened) == 2
 
 

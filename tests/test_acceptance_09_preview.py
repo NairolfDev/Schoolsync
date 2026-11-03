@@ -143,7 +143,7 @@ def test_a_preview_never_replaces_the_report_of_a_real_run(world: World):
     assert prev.report_path != real.report_path and prev.report_path.name == "vorschau.html"
     assert real.report_path.read_bytes() == real_bytes  # the failure record of the real run is still there
     assert latest_bytes is None or latest.read_bytes() == latest_bytes
-    assert len(world.rec.opened) == 1  # only the failure of the real run opened a page
+    assert len(world.rec.opened) == 0  # first failed real run remains quiet
 
 
 def test_a_preview_works_when_google_cannot_be_reached_and_still_writes_nothing(world: World):

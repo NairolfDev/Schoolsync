@@ -105,6 +105,8 @@ class RulesConfig:
     assignment_calendar: bool = False  # Eduvidual-Aufgaben nur als Task; true = zusätzlich Kalendertermin
     homework_lead_days: int = 3
     exam_lead_days: int = 7
+    study_every_days: int = 0  # Lernplan: alle x Tage vor einer Prüfung eine zusätzliche Lern-Task; 0 = aus
+    study_start_days: int = 14  # Lernplan beginnt so viele Tage vor der Prüfung
     reminder_minutes: int = 1440
 
 
@@ -115,12 +117,14 @@ class RetryConfig:
     network_wait_seconds: float = 120.0  # max. Wartezeit auf Internet direkt nach der Anmeldung
     connect_timeout: float = 10.0
     read_timeout: float = 30.0
+    failures_before_report: int = 3  # automatische Läufe nacheinander mit Fehler, bevor Bericht/Meldung erscheinen
     run_timeout_seconds: float = 1500.0  # harte Obergrenze für einen Lauf
 
 
 @dataclass(frozen=True)
 class ReportConfig:
     open_on: str = "problems"  # problems | warnings | never
+    notify: bool = True  # Windows-Benachrichtigung zusätzlich zum Bericht
     keep_days: int = 30  # Berichte
     log_keep_days: int = 30  # Logdateien
 
@@ -206,6 +210,8 @@ def _validate(cfg: Config) -> None:
     need(1 <= r.reminder_minutes <= 40320, "[rules] reminder_minutes muss zwischen 1 und 40320 liegen.")
     t = cfg.retry
     need(1 <= t.max_attempts <= 10, "[retry] max_attempts muss zwischen 1 und 10 liegen.")
+    need(1 <= t.failures_before_report <= 24, "[retry] failures_before_report muss zwischen 1 und 24 liegen.")
+    need(0 <= r.study_every_days <= 30 and 1 <= r.study_start_days <= 60, "[rules] study_every_days 0-30, study_start_days 1-60.")
     need(all(d >= 0 for d in t.delays_seconds), "[retry] delays_seconds dürfen nicht negativ sein.")
     need(t.connect_timeout > 0 and t.read_timeout > 0, "[retry] Zeitlimits müssen positiv sein.")
     need(t.network_wait_seconds >= 0, "[retry] network_wait_seconds darf nicht negativ sein.")

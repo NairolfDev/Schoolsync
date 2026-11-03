@@ -618,7 +618,7 @@ def test_a_failing_google_target_does_not_stop_the_other_target_and_is_caught_up
     assert sum(r.tasks.failed for r in out.report.sources.values()) >= 1
     assert sum(r.calendar.failed for r in out.report.sources.values()) == 0
     assert any(c.target == Target.TASKS and c.status == ChangeStatus.FAILED for c in out.report.changes)
-    assert len(world.rec.opened) == 1
+    assert len(world.rec.opened) == 0
 
     world.google.clear_faults()
     again = world.start(at=at(2026, 10, 14, 9, 30))

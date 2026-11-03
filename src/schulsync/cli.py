@@ -11,9 +11,8 @@ Design notes
 - All console I/O goes through `CliEnv` (say / ask / ask_secret) so tests inject it; the defaults never raise when
   `sys.stdout`/`sys.stdin` is None (pythonw.exe). Interactive commands without a console end with a German message.
 - Logging goes to the daily log file in every command (logging_setup); console lines only with `--verbose`.
-- `run --auto` never fails silently: any error before or outside `runner.run` (missing/broken config, secret store,
-  crash) becomes a minimal FAILED report that is written and opened in the browser once per day and error kind
-  (marker file `auto_failure_report.json`; the file is independent of the state DB, which may be the broken part).
+- Errors before or outside `runner.run` are recorded independently of the state DB. Their reports are saved quietly
+  and shown only after the same error has occurred three times in succession.
 - Secrets are never printed or logged: new passwords are registered with `redact` right after input; the console only
   ever shows secret *names* (check) or nothing (setup).
 - `check` and `setup` take the program lock (they may refresh or write the Google token and the secret store); while a run
@@ -30,7 +29,6 @@ from __future__ import annotations
 
 import argparse
 import getpass
-import hashlib
 import json
 import logging
 import os
@@ -44,7 +42,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-from . import __version__, factories, google_auth, runner
+from . import __version__, factories, google_auth, runner, rules, retry_state, notify
 from . import autostart as autostart_module
 from .config import Config, Paths, ReportConfig, load_config, set_config_value
 from .errors import ConfigError, ErrorInfo, GoogleAuthError, SchulSyncError
@@ -77,7 +75,6 @@ from .timeutil import now_vienna, to_vienna, today_vienna
 log = logging.getLogger("schulsync.cli")
 
 PROG = "schulsync"
-FAILURE_MARKER = "auto_failure_report.json"
 WATCHDOG_GRACE_SECONDS = 60.0  # the hard limit is run_timeout_seconds (cooperative) plus this
 LOCK_BUSY_TEXT = "SchulSync läuft gerade, bitte kurz warten."
 LABEL = factories.SOURCE_LABEL
@@ -271,8 +268,8 @@ def _fail(s: _Session, exc: BaseException) -> int:
         if auto and isinstance(exc, LockHeldError):
             return 0  # another instance is working: the quiet exit of an automatic start
         code = 2 if isinstance(exc, ConfigError) else 1
-        if auto:
-            _auto_failure_report(s, info)
+        if s.args.command == "run":
+            _auto_failure_report(s, info, RunMode.AUTO if auto else RunMode.MANUAL)
         else:
             s.say(f"Fehler: {info.message}")
             if info.hint:
@@ -284,9 +281,14 @@ def _fail(s: _Session, exc: BaseException) -> int:
 
 
 def _auto_failure_report(s: _Session, info: ErrorInfo, mode: RunMode = RunMode.AUTO) -> None:
-    """Minimal FAILED report for a run that died outside the runner (or was killed by the watchdog); opened once per day
-    and error kind."""
+    """Record an error outside the runner and show its report after three consecutive failures."""
     now = s.env.clock()
+    key = retry_state.normalize_error("program", info.code)
+    try:
+        retry = retry_state.record(s.paths, {key}, now)
+    except Exception:  # Never show a report early if the counter cannot be saved.
+        log.exception("Fehlerzähler konnte nicht gespeichert werden")
+        retry = {"counts": {}, "notified": []}
     day = today_vienna(now)
     text = info.message + (f" ({info.detail})" if info.detail else "")
     rep = RunReport(
@@ -302,9 +304,9 @@ def _auto_failure_report(s: _Session, info: ErrorInfo, mode: RunMode = RunMode.A
         path = write_report(s.paths, rep)
     except OSError as exc:
         log.error("Fehlerbericht konnte nicht geschrieben werden (%s).", type(exc).__name__)
-        s.say(f"Fehler: {info.message}")
-        return
-    rep.report_path = str(path)
+        path = None
+    if path is not None:
+        rep.report_path = str(path)
     log.error("Automatischer Lauf fehlgeschlagen; Bericht: %s", path)
     cfg = s.config_or_none()
     # Reports are kept for a limited time (ANFORDERUNGEN 8). The runner prunes after every run; a run that dies before the
@@ -314,22 +316,25 @@ def _auto_failure_report(s: _Session, info: ErrorInfo, mode: RunMode = RunMode.A
         prune_reports(s.paths, keep_days, now)
     except Exception:  # noqa: BLE001 - housekeeping must never hide the failure it reports
         log.warning("Alte Berichte konnten nicht aufgeräumt werden.", exc_info=True)
-    if cfg is not None and cfg.report.open_on == "never":
+    if retry["counts"].get(key, 0) < 3 or key in retry["notified"]:
         return
-    fingerprint = hashlib.sha256(f"{info.code}|{info.message}".encode("utf-8")).hexdigest()[:16]
-    marker = s.paths.home / FAILURE_MARKER
-    try:
-        seen = json.loads(marker.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        seen = {}
-    if seen == {"day": day.isoformat(), "fingerprint": fingerprint}:
-        log.info("Derselbe Fehlerbericht wurde heute schon geöffnet; kein weiterer Tab.")
-        return
-    if s.env.open_report(path):
+    shown = False
+    if path is not None and (cfg is None or cfg.report.open_on != "never"):
         try:
-            marker.write_text(json.dumps({"day": day.isoformat(), "fingerprint": fingerprint}), encoding="utf-8")
-        except OSError:
-            log.warning("Marker für den Fehlerbericht konnte nicht geschrieben werden.")
+            shown = bool(s.env.open_report(path))
+        except Exception:
+            log.exception("Fehlerbericht konnte nicht geöffnet werden")
+    if cfg is None or cfg.report.notify:
+        try:
+            message = "Der Abgleich ist wiederholt fehlgeschlagen. Details stehen im Bericht." if path else "Der Abgleich ist wiederholt fehlgeschlagen. Der Bericht konnte nicht gespeichert werden."
+            shown = bool(notify.toast("SchulSync: Problem beim Abgleich", message)) or shown
+        except Exception:
+            log.exception("Benachrichtigung fehlgeschlagen")
+    if shown:
+        try:
+            retry_state.mark_notified(s.paths, {key})
+        except Exception:
+            log.exception("Meldungsstatus konnte nicht gespeichert werden")
 
 
 # --------------------------------------------------------------------------- run / preview / restore / report
@@ -366,9 +371,6 @@ class _Watchdog:
             log.error("Hartes Zeitlimit erreicht (%s): Der Lauf hängt und wird mit Exit-Code 3 beendet.", limit)
             try:
                 _auto_failure_report(s, info, self._mode)
-                if self._mode != RunMode.AUTO:
-                    s.say(f"Fehler: {info.message}")
-                    s.say(f"Hinweis: {info.hint}")
             except Exception:  # noqa: BLE001 - best effort: nothing may keep the process alive
                 log.exception("Der Bericht zum harten Zeitlimit konnte nicht erstellt werden")
             for handler in logging.getLogger().handlers + log.handlers + logging.getLogger("schulsync").handlers:
@@ -397,6 +399,13 @@ def _probe_state(s: _Session, deps: runner.Deps) -> None:
 
 def _cmd_run(s: _Session) -> int:
     auto = bool(s.args.auto)
+    if auto:
+        try:
+            pending = retry_state.read(s.paths).get("next_retry")
+            if pending and s.env.clock() < datetime.fromisoformat(pending):
+                return 0
+        except (OSError, ValueError, TypeError):
+            log.warning("Wiederholungszeitpunkt konnte nicht gelesen werden.")
     mode = RunMode.AUTO if auto else RunMode.MANUAL
     deps = s.deps()
     _probe_state(s, deps)
@@ -406,10 +415,11 @@ def _cmd_run(s: _Session) -> int:
         outcome = runner.run(deps, mode, force=bool(s.args.force))
     finally:
         watchdog.stop()
-    # A normal automatic run is silent; text only for problems (the runner opens the report itself).
-    if outcome.console_text and not outcome.silent and (not auto or outcome.exit_code != 0):
+    if outcome.report is None and outcome.console_text.startswith("SchulSync läuft bereits."):
         s.say(outcome.console_text)
-    if auto and outcome.exit_code != 0 and outcome.report_path is None:
+        return outcome.exit_code
+    # A normal automatic run is silent; text only for problems (the runner opens the report itself).
+    if outcome.exit_code != 0 and outcome.report is None and not outcome.silent:
         # The runner could not report (e.g. the lock file cannot be created). Under pythonw the console text is lost,
         # so the user would never learn that nothing ran: write and open the minimal failure report ourselves.
         _auto_failure_report(
@@ -418,8 +428,14 @@ def _cmd_run(s: _Session) -> int:
                 "run_failed",
                 outcome.console_text or "Der automatische Lauf ist fehlgeschlagen.",
                 hint="Details stehen in der Logdatei (Ordner 'logs' im SchulSync-Datenordner).",
-            ),
+            ), mode,
         )
+    try:
+        reportable = any(n >= 3 for n in retry_state.read(s.paths)["counts"].values())
+    except (OSError, ValueError, TypeError):
+        reportable = False
+    if outcome.console_text and not outcome.silent and (outcome.exit_code == 0 and not auto or outcome.exit_code != 0 and reportable):
+        s.say(outcome.console_text)
     return outcome.exit_code
 
 
@@ -643,7 +659,24 @@ def _check(s: _Session) -> int:
 # --------------------------------------------------------------------------- status
 
 
-_KIND_DE = {Kind.ASSIGNMENT: "Abgabe", Kind.HOMEWORK: "Hausaufgabe", Kind.EXAM: "Prüfung", Kind.CANCELLATION: "Entfall"}
+_KIND_DE = {Kind.ASSIGNMENT: "Abgabe", Kind.HOMEWORK: "Hausaufgabe", Kind.EXAM: "Prüfung", Kind.CANCELLATION: "Entfall", Kind.STUDY: "Lernplan"}
+
+
+def _cmd_study_preview(s: _Session) -> int:
+    cfg = s.load_config()
+    today = today_vienna(s.env.clock())
+    with _state(s) as store:
+        exams = [] if store is None else [it.item for it in store.all_items()
+                                          if it.item.kind == Kind.EXAM and not it.cancelled and it.item.when.start_date >= today]
+    sessions = sorted((rules.task_start_date(it, cfg.rules), it.title) for it in rules.study_items(exams, cfg.rules)
+                      if rules.task_start_date(it, cfg.rules) >= today)
+    s.say("Lernplan-Vorschau (lokal gespeicherte Prüfungen):")
+    if not sessions:
+        s.say("  Keine kommenden zusätzlichen Lernaufgaben.")
+    for due, title in sessions:
+        s.say(f"  {due:%d.%m.%Y}  Lernen: {title}")
+    s.say("Es wurde nichts bei Google geändert; die Vorschau verwendet den letzten lokalen Stand.")
+    return 0
 
 
 def _status_week(say: Callable[[str], None], store: StateStore, today: date) -> None:
@@ -672,6 +705,16 @@ def _cmd_status(s: _Session) -> int:
     say("SchulSync - Status")
     say(f"Datenordner: {s.paths.home}")
     say("Konfiguration: " + ("gültig." if cfg else "fehlt oder ist fehlerhaft (schulsync setup / schulsync check)."))
+    try:
+        retry = retry_state.read(s.paths)
+        def retry_time(value: str | None) -> str:
+            return _fmt(datetime.fromisoformat(value)) if value else "keiner"
+        say(f"Letzter erfolgreicher Lauf: {retry_time(retry.get('last_success'))}")
+        say(f"Nächster Wiederholungsversuch: {retry_time(retry.get('next_retry'))}")
+        counts = retry.get("counts", {})
+        say("Fehlerzähler: " + (", ".join(f"{key} {n}/3" for key, n in sorted(counts.items())) if counts else "keine"))
+    except (OSError, ValueError, TypeError):
+        say("Wiederholungsstatus konnte nicht gelesen werden.")
     sources = [Source(n) for n in cfg.enabled_sources] if cfg else list(Source)
     with _state(s) as store:
         if store is None:
@@ -1024,7 +1067,23 @@ def _cmd_uninstall(s: _Session) -> int:
     return 0
 
 
+def _cmd_settings(s: _Session) -> int:
+    from . import settings
+
+    return settings.run_settings(
+        s.paths.config,
+        say=s.say,
+        ask=s.env.ask,
+        today=today_vienna(s.env.clock()),
+        do_list=bool(s.args.list),
+        sets=s.args.set,
+        resets=s.args.reset,
+    )
+
+
 _COMMANDS: dict[str, Callable[[_Session], int]] = {
+    "study-preview": _cmd_study_preview,
+    "settings": _cmd_settings,
     "uninstall": _cmd_uninstall,
     "update": _cmd_update,
     "install": _cmd_install,
@@ -1105,8 +1164,13 @@ def _build_parser(say: Callable[[str], None]) -> argparse.ArgumentParser:
     p.add_argument("--auto", action="store_true", help="Autostart-Modus: still, wenn nichts zu tun ist; Bericht im Browser nur bei Problemen")
     p.add_argument("--force", action="store_true", help="Tagesbegrenzung umgehen (manueller Start)")
     add("preview", "Vorschau: zeigt die geplanten Änderungen, schreibt nichts und verbucht keinen Erfolg")
+    add("study-preview", "Lernplan anhand lokal gespeicherter Prüfungen anzeigen, ohne Google zu ändern")
     add("check", "Prüft Konfiguration, Zugangsdaten, Google-Ziele und je Quelle, welche Datenkategorien wirklich lesbar sind")
     add("status", "Lokaler Überblick ohne Internet: letzter Lauf, Quellen, Sperren, ausstehende und gelöschte Einträge, Autostart")
+    p = add("settings", "Einstellungen ändern (Menü), anzeigen oder setzen, ohne config.toml von Hand zu bearbeiten")
+    p.add_argument("--list", action="store_true", help="alle Einstellungen mit Wert, Standard und Hilfe anzeigen (keine Eingabe)")
+    p.add_argument("--set", action="append", metavar="KEY=WERT", help="Einstellung setzen, z. B. rules.study_every_days=4 (mehrfach möglich)")
+    p.add_argument("--reset", action="append", metavar="KEY", help="Einstellung auf den Standard zurücksetzen (mehrfach möglich)")
     p = add("restore", "Von dir in Google gelöschte Einträge ausdrücklich wiederherstellen")
     p.add_argument("uids", nargs="*", metavar="UID", help="Kennungen laut 'schulsync status' (ohne Angabe: alle)")
     add("report", "Den neuesten Bericht im Browser öffnen")

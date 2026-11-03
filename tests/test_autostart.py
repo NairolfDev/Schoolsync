@@ -66,10 +66,15 @@ def test_xml_logon_trigger_for_user_with_delay():
     assert text(root, "t:Triggers/t:LogonTrigger/t:UserId") == USER
     assert text(root, "t:Triggers/t:LogonTrigger/t:Delay") == "PT1M"
     assert text(root, "t:Triggers/t:LogonTrigger/t:Enabled") == "true"
-    assert len(root.findall("t:Triggers/*", NS)) == 3  # Anmeldung plus 06:00 und 18:00
+    assert len(root.findall("t:Triggers/*", NS)) == 4  # Anmeldung, stuendlicher Wiederholer, 06:00 und 18:00
     cals = root.findall("t:Triggers/t:CalendarTrigger", NS)
-    assert [c.find("t:StartBoundary", NS).text[-8:] for c in cals] == ["06:00:00", "18:00:00"]
+    assert [c.find("t:StartBoundary", NS).text[-8:] for c in cals] == ["00:00:00", "06:00:00", "18:00:00"]
     assert all(c.find("t:ScheduleByDay/t:DaysInterval", NS).text == "1" for c in cals)
+    assert all(c.find("t:Enabled", NS).text == "true" for c in cals)
+    hourly, *fixed = cals
+    assert text(hourly, "t:Repetition/t:Interval") == "PT1M" and text(hourly, "t:Repetition/t:Duration") == "P1D"
+    assert text(hourly, "t:Repetition/t:StopAtDurationEnd") == "false"
+    assert all(c.find("t:Repetition", NS) is None for c in fixed)
 
 
 def test_xml_principal_is_interactive_least_privilege_and_never_admin():
@@ -318,7 +323,7 @@ def test_install_falls_back_to_shortcut_on_access_denied(system, paths, lnk):
     assert lnk.exists()
     assert "Zugriff verweigert" in result.details
     assert "Administrator" in result.details
-    assert "Verzögerung" in result.details  # Hinweis: Verknuepfung kann nicht verzoegern
+    assert "Hintergrund-Wächter" in result.details
     assert "Startup" in result.details
     assert not system.task_present
 
@@ -328,8 +333,11 @@ def test_install_shortcut_receives_values_via_environment_not_script_text(system
     autostart.install(paths)
     env = system.shortcut_env
     assert env["SCHULSYNC_LNK"] == str(lnk)
-    assert env["SCHULSYNC_TARGET"] == TRICKY_COMMAND
-    assert env["SCHULSYNC_ARGS"] == f"-m schulsync run --auto --home {paths.home}"  # `paths` ist nicht der Standardordner
+    assert env["SCHULSYNC_TARGET"].lower().endswith("powershell.exe")
+    assert "-WindowStyle Hidden" in env["SCHULSYNC_ARGS"]
+    watch = (paths.home / "autostart-watch.ps1").read_text(encoding="utf-8-sig")
+    assert TRICKY_COMMAND.replace("'", "''") in watch
+    assert "-m schulsync run --auto --home" in watch
     assert env["SCHULSYNC_WORKDIR"] == str(paths.home)
     ps_args = [a for a, _ in system.calls if Path(a[0]).name.lower() == "powershell.exe"][0]
     assert TRICKY_COMMAND not in " ".join(ps_args)  # keine Werte im Skripttext (keine Quoting-/Injection-Probleme)
@@ -626,6 +634,12 @@ Write-Output ('TRIGGERS=' + $def.Triggers.Count)
 Write-Output ('TRIGGER_TYPE=' + $trigger.Type)
 Write-Output ('TRIGGER_USER=' + $trigger.UserId)
 Write-Output ('TRIGGER_DELAY=' + $trigger.Delay)
+$hourly = $def.Triggers.Item(2)
+Write-Output ('HOURLY_TYPE=' + $hourly.Type)
+Write-Output ('HOURLY_INTERVAL=' + $hourly.Repetition.Interval)
+Write-Output ('HOURLY_DURATION=' + $hourly.Repetition.Duration)
+Write-Output ('HOURLY_STOP=' + $hourly.Repetition.StopAtDurationEnd)
+Write-Output ('HOURLY_START=' + $hourly.StartBoundary)
 Write-Output ('LOGON_TYPE=' + $def.Principal.LogonType)
 Write-Output ('RUN_LEVEL=' + $def.Principal.RunLevel)
 Write-Output ('INSTANCES=' + $def.Settings.MultipleInstances)
@@ -669,7 +683,10 @@ def test_windows_task_scheduler_parses_the_generated_xml_and_reads_back_what_mat
         pytest.skip(out)
     assert done.returncode == 0, f"Windows lehnt die Aufgaben-XML ab: {done.stderr.strip() or out}"
     got = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
-    assert got["TRIGGERS"] == "3" and got["TRIGGER_TYPE"] == "9"  # first: TASK_TRIGGER_LOGON, then two daily triggers
+    assert got["TRIGGERS"] == "4" and got["TRIGGER_TYPE"] == "9"  # first: TASK_TRIGGER_LOGON, then three daily triggers
+    assert got["HOURLY_TYPE"] == "2"  # TASK_TRIGGER_DAILY
+    assert got["HOURLY_INTERVAL"] == "PT1M" and got["HOURLY_DURATION"] == "P1D" and got["HOURLY_STOP"].lower() == "false"
+    assert got["HOURLY_START"].startswith("2026-01-01T00:00:00")
     assert got["TRIGGER_USER"].lower() == autostart.current_user().lower() and got["TRIGGER_DELAY"] == "PT1M"
     assert got["LOGON_TYPE"] == "3" and got["RUN_LEVEL"] == "0"  # TASK_LOGON_INTERACTIVE_TOKEN, TASK_RUNLEVEL_LUA (least privilege)
     assert got["INSTANCES"] == "2"  # TASK_INSTANCES_IGNORE_NEW
@@ -689,5 +706,25 @@ def test_the_settings_that_matter_for_a_logon_task_are_pinned_not_only_the_harml
     assert text(root, s + "WakeToRun") == "false" and text(root, s + "Enabled") == "true" and text(root, s + "Hidden") == "false"
     assert text(root, "t:Triggers/t:LogonTrigger/t:Delay") == "PT1M"
     # logon plus the fixed daily runs at 06:00 and 18:00; missed ones run when the PC is on again
-    assert [child.tag.split("}")[1] for child in root.find("t:Triggers", NS)] == ["LogonTrigger", "CalendarTrigger", "CalendarTrigger"]
+    assert [child.tag.split("}")[1] for child in root.find("t:Triggers", NS)] == ["LogonTrigger"] + ["CalendarTrigger"] * 3
     assert text(root, s + "StartWhenAvailable") == "true"
+
+
+def test_shortcut_fallback_watches_due_retries_until_shortcut_removed(tmp_path, monkeypatch):
+    from schulsync import autostart
+    from schulsync.config import Paths
+    paths = Paths(tmp_path / "Daten mit ' Zeichen")
+    link = tmp_path / 'Startup' / 'SchulSync.lnk'
+    monkeypatch.setattr(autostart, 'shortcut_path', lambda: link)
+    monkeypatch.setattr(autostart, '_try_task', lambda xml: 'Zugriff verweigert')
+    monkeypatch.setattr(autostart, 'current_user', lambda: 'test')
+    monkeypatch.setattr(autostart, 'default_command', lambda: ('C:\\Programme\\schulsync.exe', 'run --auto'))
+    call = []
+    monkeypatch.setattr(autostart, '_create_shortcut', lambda *args: call.append(args) or None)
+    result = autostart.install(paths)
+    assert result.ok and result.method == 'shortcut'
+    script = paths.home / 'autostart-watch.ps1'
+    content = script.read_text(encoding='utf-8')
+    assert 'Start-Sleep -Seconds 60' in content and 'Start-Process' in content
+    assert 'Test-Path -LiteralPath' in content and 'Mutex' in content
+    assert '-WindowStyle Hidden' in call[0][1] and str(script) in call[0][1]

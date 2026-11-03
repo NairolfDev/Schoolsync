@@ -47,12 +47,17 @@ def test_a_problem_shows_one_toast_per_problem_and_day_but_success_none(tmp_path
     env = Env(tmp_path)
     shown: list[str] = []
     env.set_items(S.assignment(), S.exam())
-    env.adapters[WU].raise_next(TransientError("Zeitüberschreitung."), times=4)
-    out = env.run(notify=lambda title, text: shown.append(title) or True)
-    assert out.report.needs_attention and shown == ["SchulSync: Problem beim Abgleich"]
-    env.adapters[WU].raise_next(TransientError("Zeitüberschreitung."), times=4)
-    env.run(notify=lambda title, text: shown.append(title) or True)  # same problem, same day
+    env.adapters[WU].raise_next(TransientError("Zeitüberschreitung."), times=16)
+    for _ in range(2):
+        out = env.run(notify=lambda title, text: shown.append(title) or True)
+        assert out.report.needs_attention and shown == []
+        env.advance(hours=1)
+    env.run(notify=lambda title, text: shown.append(title) or True)
+    assert shown == ["SchulSync: Problem beim Abgleich"]
+    env.advance(hours=1)
+    env.run(notify=lambda title, text: shown.append(title) or True)
     assert len(shown) == 1
+
 
 
 def test_a_successful_run_shows_no_toast(tmp_path):

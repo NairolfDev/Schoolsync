@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 
 from schulsync.config import Paths
-from schulsync.models import OverallStatus
+from schulsync.models import OverallStatus, RunMode
 from tests.support.acceptance_harness import ASSIGNMENT, World, at, event_for, open_tasks_for, task_for, events_for
 from tests.support.fake_google import FakeGoogle
 
@@ -81,7 +81,7 @@ def test_a_process_killed_right_after_google_accepted_a_create_leaves_no_duplica
 
     world = World(Paths(home), google=google).load_standard()
     world.webuntis.set_items([])
-    out = world.start(at=DAY)  # the lock of the dead process is free, the database file of the dead process opens
+    out = world.start(RunMode.MANUAL, at=DAY)  # a manual start immediately exercises recovery
 
     assert out.exit_code == 0 and out.report.status == OverallStatus.SUCCESS, out.console_text
     assert len(events_for(world.google, ASSIGNMENT.uid)) == 1 and len(world.google.events) == 1

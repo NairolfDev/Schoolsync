@@ -50,10 +50,10 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, TypeVar
 from urllib.parse import urlsplit
 
-from . import logging_setup, notify as notify_mod, report as report_mod, rules
+from . import logging_setup, notify as notify_mod, report as report_mod, retry_state, rules
 from .config import RUN_TIMES, Config, Paths
 from .dryrun import DryRunGateway
-from .errors import AuthError, ConfigError, ErrorInfo, SchulSyncError, TransientError
+from .errors import AuthError, ConfigError, ErrorInfo, NetworkError, OutcomeUnknownError, SchulSyncError, TransientError
 from .google_types import GoogleGateway
 from .lock import ProcessLock
 from .models import (
@@ -129,6 +129,8 @@ _STATUS_DE = {
     ChangeStatus.UNCERTAIN: "Ausgang ungeklärt",
 }
 
+_FAIL_KEY = "auto_consecutive_failures"
+
 # per-source modes of one run
 DISABLED, DONE, WRITES, FETCH, BLOCKED, RESTORE = "disabled", "done", "writes", "fetch", "blocked", "restore"
 
@@ -195,9 +197,60 @@ def run(deps: Deps, mode: RunMode, *, force: bool = False) -> RunOutcome:
     if not acquired:
         return _locked(mode)
     try:
-        return _Run(deps, mode, force).execute()
+        if mode != RunMode.PREVIEW:
+            try:
+                pending = retry_state.read(deps.paths)
+                previous = pending.get("in_progress")
+                if previous:
+                    started = datetime.fromisoformat(previous)
+                    due = started.astimezone(UTC) + timedelta(hours=1)
+                    if mode == RunMode.AUTO and deps.clock().astimezone(UTC) < due.astimezone(UTC):
+                        return RunOutcome(0, None, None, "", True)
+                    recovered = retry_state.record(deps.paths, {"program:unexpected"}, started)
+                    if recovered["counts"].get("program:unexpected", 0) >= 3 and "program:unexpected" not in recovered["notified"]:
+                        return _report_interrupted(deps, started)
+                retry_state.begin(deps.paths, deps.clock())
+            except (OSError, ValueError, TypeError):
+                log.exception("Laufstatus konnte nicht gespeichert werden.")
+        outcome = _Run(deps, mode, force).execute()
+        if mode != RunMode.PREVIEW and (outcome.silent or outcome.exit_code == 0 and outcome.report is None):
+            try:
+                retry_state.clear_progress(deps.paths)
+            except (OSError, ValueError, TypeError):
+                log.exception("Laufstatus konnte nicht zurückgesetzt werden.")
+        return outcome
     finally:
         lock.release()
+
+
+def _report_interrupted(deps: Deps, started: datetime) -> RunOutcome:
+    now = deps.clock()
+    rep = RunReport(
+        started_at=started, finished_at=now, mode=RunMode.AUTO, day=today_vienna(now),
+        status=OverallStatus.FAILED,
+        notices=[Notice(Severity.ERROR, "unexpected", "SchulSync wurde dreimal unerwartet unterbrochen.")],
+        next_steps=["Die Logdateien prüfen; SchulSync versucht den Abgleich erneut."],
+    )
+    path = None
+    delivered = False
+    try:
+        path = report_mod.write_report(deps.paths, rep)
+        rep.report_path = str(path)
+        if deps.config.report.open_on != "never":
+            delivered = bool(deps.open_report(path))
+    except Exception:  # noqa: BLE001
+        log.exception("Bericht zum unterbrochenen Lauf konnte nicht geöffnet werden.")
+    if deps.config.report.notify:
+        try:
+            delivered = bool(deps.notify("SchulSync: Problem beim Abgleich", "SchulSync wurde wiederholt unterbrochen. 'schulsync report' öffnet den Bericht.")) or delivered
+        except Exception:  # noqa: BLE001
+            log.warning("Benachrichtigung fehlgeschlagen.")
+    if delivered:
+        try:
+            retry_state.mark_notified(deps.paths, {"program:unexpected"})
+        except OSError:
+            log.warning("Meldungsstatus konnte nicht gespeichert werden.")
+    return RunOutcome(1, rep, path, "SchulSync wurde wiederholt unterbrochen.", False)
 
 
 def restore(deps: Deps, uids: Sequence[str] | None) -> RunOutcome:
@@ -262,6 +315,9 @@ class _Run:
         self.engine: SyncEngine | None = None
         self.dry: DryRunGateway | None = None
         self.preview_google_error: ErrorInfo | None = None
+        self._new_alerts: set[str] = set()
+        self._retry_run = False
+        self._prior_targets: dict[str, tuple[bool, bool, bool]] = {}
 
     # ---- frame
 
@@ -392,7 +448,22 @@ class _Run:
         # New targets (the user re-created the calendar / list) mean pending work for every item, also on a day that was
         # already finished: reset BEFORE the day gate looks at it. A preview resets only its in-memory copy.
         self.engine.reset_targets_if_changed(self.deps.clock())
+        if not self.preview:
+            try:
+                pending = retry_state.read(self.deps.paths)
+                due = pending.get("next_retry")
+                if gate and due and self.deps.clock().astimezone(UTC) < datetime.fromisoformat(due).astimezone(UTC):
+                    return RunOutcome(0, None, None, "", True)
+                if due:
+                    self._retry_run = True
+                    gate = False  # retry the entire run, manually or after its one-hour delay
+            except (OSError, ValueError, TypeError):
+                log.warning("Wiederholungszeitpunkt nicht lesbar.")
         self._classify(gate)
+        if self._retry_run:
+            for source in self.sources:
+                for st in self.work.items_for_source(source):
+                    self._prior_targets[st.uid] = (st.event_state == EventState.ACTIVE, st.task_state in (TaskState.OPEN, TaskState.DONE), st.applied_cancelled)
         if gate and all(self.modes[s] in (DONE, DISABLED) for s in Source):
             log.info("Heute ist bereits alles erledigt; dieser Start endet still.")
             return RunOutcome(0, None, None, "", True)
@@ -439,8 +510,6 @@ class _Run:
                 self.modes[s] = DONE
             elif gate and sd is not None and sd.fetch_complete:
                 self.modes[s] = WRITES  # fetched today; only the Google writes are missing -> no refetch
-            elif self.mode == RunMode.AUTO and self.work.is_auth_blocked(s):
-                self.modes[s] = BLOCKED
             else:
                 self.modes[s] = FETCH
 
@@ -518,7 +587,8 @@ class _Run:
             result = adapter.fetch(window, tracked, now)
             le = result.login_error
             if le is not None and le.code in _TRANSIENT_CODES:
-                raise TransientError(le.message, hint=le.hint, detail=le.detail)
+                kind = {"network": NetworkError, "outcome_unknown": OutcomeUnknownError}.get(le.code, TransientError)
+                raise kind(le.message, hint=le.hint, detail=le.detail)
             return result
 
         try:
@@ -550,13 +620,9 @@ class _Run:
 
     def _auth_failed(self, source: Source, info: ErrorInfo, now: datetime) -> None:
         self._source_failed(source, info, now)
-        if not self.preview:
-            assert self.real is not None
-            self._safe(lambda: self.real.set_auth_blocked(source, now, info.code), "Anmeldesperre setzen")  # type: ignore[union-attr]
-        name = _SOURCE_NAME[source]
         self.next_steps.append(
-            f"{name}: Anmeldedaten prüfen und 'schulsync setup --{source.value}' ausführen. Automatische Läufe überspringen {name}, "
-            "bis die Anmeldung wieder funktioniert; ein manueller Lauf ('schulsync run') versucht sie erneut."
+            f"{_SOURCE_NAME[source]}: Anmeldedaten prüfen und 'schulsync setup --{source.value}' ausführen. "
+            "Der nächste automatische Versuch folgt frühestens nach einer Stunde."
         )
 
     def _blocked(self, source: Source) -> None:
@@ -719,18 +785,19 @@ class _Run:
         now = self.deps.clock()
         out: list[Notice] = []
         for source in self.shown:
-            if self.modes.get(source) not in (DONE, WRITES):
+            if self.modes.get(source) not in (DONE, WRITES) and not self._retry_run:
                 continue
             stored = self._safe(lambda s=source: self.work.items_for_source(s), "Übernommene Einträge lesen") or []  # type: ignore[union-attr]
             for st in stored:
                 if rules.is_fully_past(st.item, now):
                     continue
                 where = []
-                if st.event_state == EventState.ACTIVE:
-                    where.append("Kalender (abgesagt)" if st.cancelled else "Kalender")
-                if st.task_state == TaskState.OPEN:
+                prior_event, prior_task, prior_cancelled = self._prior_targets.get(st.uid, (False, False, False)) if self._retry_run else (True, True, st.applied_cancelled)
+                if prior_event and st.event_state == EventState.ACTIVE:
+                    where.append("Kalender (abgesagt)" if prior_cancelled else "Kalender")
+                if prior_task and st.task_state == TaskState.OPEN:
                     where.append("Aufgabe")
-                elif st.task_state == TaskState.DONE:
+                elif prior_task and st.task_state == TaskState.DONE:
                     where.append("Aufgabe (von dir erledigt)")
                 if where:
                     out.append(Notice(Severity.INFO, report_mod.NOTICE_TAKEN_OVER, " und ".join(where), source, st.uid, st.item.title))
@@ -766,7 +833,10 @@ class _Run:
         fp = self._fingerprint(report)
         if not self.preview:
             self._housekeeping()
-            self._maybe_open(report, fp, path)
+            if not self._hold_back(report):
+                delivered = self._maybe_open(report, fp, path)
+                if delivered and self._new_alerts:
+                    self._safe(lambda: retry_state.mark_notified(self.deps.paths, self._new_alerts), "Meldungsstatus speichern")
             if self.real is not None:
                 self._safe(
                     lambda: self.real.record_run(  # type: ignore[union-attr]
@@ -783,6 +853,47 @@ class _Run:
             ", ".join(f"{s.value}={r.status.value}" for s, r in report.sources.items()),
         )
         return RunOutcome(code, report, path, redact(self._console_text(report, path)), False)
+
+    def _failure_keys(self, report: RunReport) -> set[str]:
+        keys: set[str] = set()
+        if self.crash is not None:
+            keys.add(retry_state.normalize_error("program", self.crash.code))
+        for src, result in report.sources.items():
+            for error in result.errors:
+                if error is not self.crash:
+                    keys.add(retry_state.normalize_error(src.value, error.code))
+            if not result.errors:  # a failed login also marks every category failed
+                for category in result.categories.values():
+                    if not category.ok:
+                        keys.add(retry_state.normalize_error(src.value, category.error.code if category.error else "incomplete"))
+        for service, target in (("calendar", report.calendar_target), ("tasks", report.tasks_target)):
+            if target.ok is False:
+                keys.add(retry_state.normalize_error(service, target.error.code if target.error else "target_unavailable"))
+        for change in report.changes:
+            if change.status in (ChangeStatus.FAILED, ChangeStatus.UNCERTAIN, ChangeStatus.DEFERRED):
+                target = report.calendar_target if change.target.value == "calendar" else report.tasks_target
+                if change.error is not None or target.ok is not False:
+                    keys.add(retry_state.normalize_error(change.target.value, change.error.code if change.error else change.status.value))
+        for notice in report.notices:
+            if notice.severity == Severity.ERROR:
+                keys.add(retry_state.normalize_error(notice.source.value if notice.source else "program", notice.code))
+        if report.needs_attention and not keys:
+            keys.add("program:failed")
+        return keys
+
+    def _hold_back(self, report: RunReport) -> bool:
+        keys = self._failure_keys(report) if report.needs_attention else set()
+        try:
+            data = retry_state.record(self.deps.paths, keys, self.deps.clock())
+        except (OSError, ValueError, TypeError):
+            log.exception("Fehlerzähler konnte nicht gespeichert werden; Meldung bleibt zurückgehalten.")
+            return True
+        eligible = {key for key, count in data["counts"].items() if count >= 3}
+        new = eligible - set(data["notified"])
+        if not new:
+            return bool(keys)
+        self._new_alerts = new
+        return False
 
     def _plain_text_copy(self, report: RunReport) -> Path | None:
         """The HTML report is lost: leave the console summary as a text file next to the logs, so that a failed run never
@@ -814,29 +925,28 @@ class _Run:
         if self.real is not None:
             self._safe(lambda: self.real.prune_old(self.day - timedelta(days=keep)), "Alte Läufe aufräumen")  # type: ignore[union-attr]
 
-    def _maybe_open(self, report: RunReport, fp: str, path: Path | None) -> None:
+    def _maybe_open(self, report: RunReport, fp: str, path: Path | None) -> bool:
+        delivered = False
         open_on = self.cfg.report.open_on
         warn = any(n.severity == Severity.WARNING for n in report.notices)
-        if open_on == "never" or path is None or not (report.needs_attention or (open_on == "warnings" and warn)):
-            return
-        shown = self._opened_today()
-        if fp in shown:
-            log.info("Der Bericht wurde heute schon geöffnet (gleicher Fehler); die Datei wurde nur aktualisiert: %s", path)
-            return
-        try:
-            ok = bool(self.deps.open_report(path))
-        except Exception:  # noqa: BLE001
-            ok = False
-        if report.needs_attention:  # also when the browser could not be opened: the toast is the second way to notice
+        should_open = path is not None and open_on != "never" and (report.needs_attention or (open_on == "warnings" and warn))
+        if should_open and fp not in self._opened_today():
             try:
-                self.deps.notify("SchulSync: Problem beim Abgleich", "Nicht alles konnte übernommen werden. Der Bericht liegt im Browser; 'schulsync report' öffnet ihn erneut.")
-            except Exception:  # noqa: BLE001 - a notification must never break the run
+                ok = bool(self.deps.open_report(path))
+            except Exception:  # noqa: BLE001
+                ok = False
+            if ok:
+                delivered = True
+            if ok and self.real is not None:
+                self._safe(lambda: self.real.mark_report_opened(self.day, fp, self.deps.clock()), "Berichtsstatus speichern")
+            elif not ok:
+                log.warning("Der Bericht konnte nicht im Browser geöffnet werden. Gespeichert unter: %s", path)
+        if report.needs_attention and self.cfg.report.notify:
+            try:
+                delivered = bool(self.deps.notify("SchulSync: Problem beim Abgleich", "Nicht alles konnte übernommen werden. 'schulsync report' öffnet den Bericht.")) or delivered
+            except Exception:  # noqa: BLE001
                 log.warning("Benachrichtigung fehlgeschlagen.")
-        if ok:
-            if self.real is not None:
-                self._safe(lambda: self.real.mark_report_opened(self.day, fp, self.deps.clock()), "Berichtsstatus speichern")  # type: ignore[union-attr]
-        else:
-            log.warning("Der Bericht konnte nicht im Browser geöffnet werden. Gespeichert unter: %s", path)
+        return delivered
 
     def _opened_today(self) -> set[str]:
         """Fingerprints that already got a tab today: ALL of them (problem A, B, A must not open a third tab), kept in the

@@ -126,6 +126,7 @@ def make_config(**sections: Mapping[str, Any]) -> Config:
         google=GoogleConfig(calendar_id="cal-schule", tasklist_id="list-schule"),
         rules=RulesConfig(window_days=21, assignment_lead_days=3, assignment_lead_hours=0, assignment_calendar=True),  # the edge tests are written for a 21-day window
     )
+    sections["retry"] = {"failures_before_report": 1, **sections.get("retry", {})}  # problems show at once in these tests
     return configure(cfg, **sections)
 
 

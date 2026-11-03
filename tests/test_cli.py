@@ -196,7 +196,7 @@ def all_logs(paths: Paths) -> str:
 
 def test_version_and_help_are_german(env, io):
     assert main(["--version"], env=env) == 0
-    assert "SchulSync 1.1.2" in io.out
+    assert "SchulSync 2.0.0" in io.out
     assert main(["--help"], env=env) == 0
     for word in ("Aufruf:", "Befehle:", "Optionen:", "setup", "run", "preview", "check", "status", "restore", "report", "autostart", "--home"):
         assert word in io.out
@@ -261,9 +261,9 @@ def test_no_console_never_crashes(paths, clock, store, opened, monkeypatch):
     assert main(["--help"], env=env) == 0
     assert main(["status"], env=env) == 0
     assert main(["bogus"], env=env) == 2
-    # automatic run with a missing config: failure report + browser, in -v mode too (stderr is None)
+    # First failure is recorded without opening the browser, even without stderr.
     assert main(["run", "--auto", "-v"], env=env) == 2
-    assert len(opened) == 1 and opened[0].is_file()
+    assert opened == [] and (paths.reports / "bericht-2026-10-14.html").is_file()
     # an interactive command without a console is a clean configuration error
     assert main(["setup"], env=env) == 2
 
@@ -297,7 +297,7 @@ def test_run_manual_passes_mode_force_and_prints(env, io, config_file, monkeypat
     env.build_deps = lambda p, c, s: make_deps(p, c)
     assert main(["run", "--force"], env=env) == 1
     assert len(calls) == 1 and calls[0][1] == RunMode.MANUAL and calls[0][2] is True
-    assert io.out == "Teilweise fehlgeschlagen."
+    assert io.out == ""
     calls.clear()
     assert main(["run"], env=env) == 1
     assert calls[0][2] is False
@@ -315,7 +315,7 @@ def test_run_auto_with_problems_prints_the_runner_text(env, io, config_file, mon
     monkeypatch.setattr(runner, "run", lambda deps, mode, *, force=False: outcome(1, "Eduvidual fehlgeschlagen."))
     env.build_deps = lambda p, c, s: make_deps(p, c)
     assert main(["run", "--auto"], env=env) == 1
-    assert "Eduvidual fehlgeschlagen." in io.out
+    assert io.out == ""
 
 
 def test_run_auto_lock_held_exits_quietly(env, io, config_file, monkeypatch, opened):
@@ -332,8 +332,8 @@ def test_run_manual_errors_are_german_without_report_or_browser(env, io, config_
     monkeypatch.setattr(runner, "run", lambda *a, **k: (_ for _ in ()).throw(ConfigError("Kaputt.", hint="Bitte reparieren.")))
     env.build_deps = lambda p, c, s: make_deps(p, c)
     assert main(["run"], env=env) == 2
-    assert "Fehler: Kaputt." in io.out and "Hinweis: Bitte reparieren." in io.out
-    assert opened == [] and list(env.paths.reports.glob("*.html")) == []
+    assert io.out == ""
+    assert opened == [] and list(env.paths.reports.glob("*.html"))
 
 
 def test_run_manual_unexpected_exception_is_reported_without_details(env, io, config_file, monkeypatch, paths):
@@ -341,7 +341,7 @@ def test_run_manual_unexpected_exception_is_reported_without_details(env, io, co
     monkeypatch.setattr(runner, "run", lambda *a, **k: (_ for _ in ()).throw(ValueError(f"boom {PW_EDU}")))
     env.build_deps = lambda p, c, s: make_deps(p, c)
     assert main(["run"], env=env) == 1
-    assert "Unerwarteter Fehler (ValueError)" in io.out and "Logdatei" in io.out
+    assert io.out == ""
     assert PW_EDU not in io.out and PW_EDU not in all_logs(paths)
     assert "Traceback" in all_logs(paths)  # the details are in the log, redacted
 
@@ -389,26 +389,31 @@ def test_run_auto_failure_writes_report_logs_and_opens_browser_once_per_day(name
     prepare(paths, env, monkeypatch)
     assert main(["run", "--auto"], env=env) == code
     report_file = paths.reports / "bericht-2026-10-14.html"
-    assert opened == [report_file] and report_file.is_file()
+    assert opened == [] and report_file.is_file()
     html_text = report_file.read_text(encoding="utf-8")
     assert "Fehlgeschlagen" in html_text and text.split()[0] in html_text
     assert "Fehler (" in all_logs(paths) or "Unerwarteter Fehler" in all_logs(paths)
-    # same error again the same day: report refreshed, no second tab
+    # Same error: after one hour report refreshed but not opened; after two hours opened once.
     report_file.unlink()
+    clock.now += timedelta(hours=1)
     assert main(["run", "--auto"], env=env) == code
-    assert report_file.is_file() and len(opened) == 1
-    # next day: opened again
-    clock.now = clock.now + timedelta(days=1)
+    assert report_file.is_file() and len(opened) == 0
+    clock.now += timedelta(hours=1)
     assert main(["run", "--auto"], env=env) == code
-    assert len(opened) == 2 and opened[1].name == "bericht-2026-10-15.html"
+    assert opened == [report_file]
+    clock.now += timedelta(days=1)
+    assert main(["run", "--auto"], env=env) == code
+    assert opened == [report_file]
 
 
-def test_run_auto_a_different_error_the_same_day_opens_again(env, paths, monkeypatch, opened):
+def test_run_auto_a_different_error_starts_a_new_series(env, paths, monkeypatch, opened, clock):
     assert main(["run", "--auto"], env=env) == 2  # config missing
     cli._write_default_config(paths.config)
     _crash(monkeypatch, env, RuntimeError("kaputt"))
+    clock.now += timedelta(hours=1)
     assert main(["run", "--auto"], env=env) == 1
-    assert len(opened) == 2
+    assert not opened
+    assert json.loads((paths.home / "retry_state.json").read_text())["counts"] == {"program:internal": 1}
 
 
 def test_run_auto_failure_report_is_not_opened_when_open_on_is_never_but_still_written(env, paths, monkeypatch, opened, config_file):
@@ -418,11 +423,13 @@ def test_run_auto_failure_report_is_not_opened_when_open_on_is_never_but_still_w
     assert opened == [] and (paths.reports / "bericht-2026-10-14.html").is_file()
 
 
-def test_run_auto_failed_browser_open_is_retried_next_time(env, paths):
+def test_run_auto_failed_browser_open_is_retried_next_time(env, paths, clock, monkeypatch):
     attempts = []
     env.open_report = lambda p: attempts.append(p) or False
-    assert main(["run", "--auto"], env=env) == 2
-    assert main(["run", "--auto"], env=env) == 2
+    monkeypatch.setattr(cli.notify, "toast", lambda *a: False)
+    for _ in range(4):
+        assert main(["run", "--auto"], env=env) == 2
+        clock.now += timedelta(hours=1)
     assert len(attempts) == 2 and (paths.reports / "bericht-2026-10-14.html").is_file()
 
 
@@ -437,7 +444,7 @@ def test_run_auto_failure_never_leaks_secrets(env, paths, monkeypatch, config_fi
 def test_run_auto_report_file_failure_does_not_crash(env, io, paths, monkeypatch, opened):
     monkeypatch.setattr(cli, "write_report", lambda *a, **k: (_ for _ in ()).throw(OSError("Datenträger voll")))
     assert main(["run", "--auto"], env=env) == 2
-    assert opened == [] and "Konfigurationsdatei fehlt" in io.out
+    assert opened == [] and io.out == ""
 
 
 # --------------------------------------------------------------------------- preview / restore / report / autostart
@@ -1281,6 +1288,78 @@ def test_status_shows_the_next_seven_days_and_new_entries(env, io, paths, config
     assert "Nächste 7 Tage:" in out and "Hausaufgabe: Beispiele 12 bis 15" in out
     assert "Schularbeit Mathe" not in out.split("Nächste 7 Tage:")[1].split("Neu erfasst")[0]  # 28.10. is not within 7 days
     assert "Neu erfasst (letzte 3 Tage): Hausaufgabe Beispiele 12 bis 15" in out
+
+
+def test_study_preview_uses_saved_exams_without_google_writes(env, io, paths, config_file, now):
+    set_config_value(config_file, "rules", "study_every_days", 4)
+    set_config_value(config_file, "rules", "study_start_days", 14)
+    db = StateStore(paths.db)
+    exam = samples.exam(title="Mathematik")
+    db.upsert(ItemState(item=exam, item_hash="h", cancelled=False, first_seen_at=now, last_seen_at=now), now)
+    db.close()
+    assert main(["study-preview"], env=env) == 0
+    assert "Mathematik" in io.out
+    assert "14.10.2026" in io.out and "18.10.2026" in io.out
+    assert "22.10.2026" in io.out and "26.10.2026" in io.out
+    assert "nichts bei Google" in io.out
+
+
+def test_study_preview_empty_home_does_not_create_database(env, io, paths, config_file):
+    assert main(["study-preview"], env=env) == 0
+    assert "keine" in io.out.lower()
+    assert not paths.db.exists()
+
+
+def test_status_displays_retry_and_last_success_without_database(env, io, paths, now):
+    (paths.home / "retry_state.json").write_text(json.dumps({
+        "counts": {"webuntis:auth": 2}, "next_retry": (now + timedelta(hours=1)).isoformat(),
+        "last_success": (now - timedelta(days=1)).isoformat(), "notified": [],
+    }), encoding="utf-8")
+    assert main(["status"], env=env) == 0
+    assert "webuntis:auth" in io.out and "2/3" in io.out
+    assert "14.10.2026 09:00" in io.out
+    assert "13.10.2026 08:00" in io.out
+
+
+@pytest.mark.parametrize("args", [["run"], ["run", "--auto"]])
+def test_run_start_error_reports_only_after_third_failure(env, paths, opened, args, clock):
+    for n in range(3):
+        assert main(args, env=env) == 2
+        assert len(opened) == (1 if n == 2 else 0)
+        clock.now += timedelta(hours=1)
+    data = json.loads((paths.home / "retry_state.json").read_text(encoding="utf-8"))
+    assert data["counts"] == {"program:config": 3}
+
+
+def test_auto_start_error_waits_until_retry_due(env, paths, clock):
+    assert main(["run", "--auto"], env=env) == 2
+    assert main(["run", "--auto"], env=env) == 0
+    data = json.loads((paths.home / "retry_state.json").read_text(encoding="utf-8"))
+    assert data["counts"] == {"program:config": 1}
+    clock.now += timedelta(hours=1)
+    assert main(["run", "--auto"], env=env) == 2
+    assert json.loads((paths.home / "retry_state.json").read_text(encoding="utf-8"))["counts"] == {"program:config": 2}
+
+
+def test_start_error_notifies_after_three_even_when_browser_disabled(env, paths, config_file, clock, opened, monkeypatch):
+    set_config_value(config_file, "report", "open_on", "never")
+    notifications = []
+    monkeypatch.setattr(cli.notify, "toast", lambda *args: notifications.append(args) or True)
+    env.build_deps = lambda *args: (_ for _ in ()).throw(ConfigError("Kaputt"))
+    for _ in range(4):
+        assert main(["run", "--auto"], env=env) == 2
+        clock.now += timedelta(hours=1)
+    assert opened == [] and len(notifications) == 1
+
+
+def test_start_error_still_notifies_when_report_file_cannot_be_written(env, clock, monkeypatch):
+    notifications = []
+    monkeypatch.setattr(cli, "write_report", lambda *a, **k: (_ for _ in ()).throw(OSError("voll")))
+    monkeypatch.setattr(cli.notify, "toast", lambda *args: notifications.append(args) or True)
+    for _ in range(3):
+        assert main(["run", "--auto"], env=env) == 2
+        clock.now += timedelta(hours=1)
+    assert len(notifications) == 1
 
 
 def test_uninstall_from_source_only_removes_the_autostart(env, io, autostart_fake, monkeypatch):

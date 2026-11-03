@@ -89,12 +89,14 @@ from .google_types import PROP_UID, GoogleGateway, make_event_id
 from .models import (
     Action,
     Change,
+    Category,
     ChangeStatus,
     Counts,
     EventState,
     FetchResult,
     ItemState,
     ItemStatus,
+    Kind,
     Notice,
     Severity,
     Source,
@@ -108,7 +110,7 @@ from .redact import redact
 from .rules import EventAction, EventPlan, TaskAction, TaskPlan
 from .state import Intent, StateStore
 from .textblocks import TASK_NOTES_LIMIT, managed_lines, merge_description, task_marker_line, task_removed_line
-from .timeutil import fetch_window
+from .timeutil import fetch_window, today_vienna
 
 log = logging.getLogger("schulsync.sync")
 
@@ -121,6 +123,7 @@ _DEFINITIVE = (BadRequestError, AccessDeniedError, AuthError, TargetUnavailableE
 _DUP_TEXT = "Derselbe Eintrag kam in der Quelle mehrfach vor; nur ein Eintrag wurde übernommen."
 _UNKNOWN_BASE = "unknown"  # task_base_deadline sentinel: the due date in Google is unknown (see _forget_applied)
 _MAX_EVENT_GEN = 32  # generations tried when an event id is matched back to its (uid, gen)
+_STUDY_ADOPT = "study-adopt:"
 _RESTORED = "restored"  # task_removed_reason of a task released by `restore`: the old tombstone proves nothing any more
 _META_CALENDAR = "target.calendar_id"  # state meta: the ids the stored Google link state (event ids, task ids) belongs to
 _META_TASKLIST = "target.tasklist_id"
@@ -407,9 +410,11 @@ class SyncEngine:
         for n in fetch.notices:
             self._add_notice(n)
         known = {s.uid: s for s in self.store.items_for_source(fetch.source)}
+        fetch = self._with_study_plan(fetch, known, now)
         all_uids = {i.uid for i in fetch.items if i.source == fetch.source}
         items = self._dedupe(fetch, known)
         adopt, defer = self._match_identities(items, known, all_uids, fetch, now)
+        fetch = self._match_study_children(items, known, adopt, defer, fetch, now)
         present = {i.uid for i in items}
         with self.store.transaction():
             for item in items:
@@ -427,6 +432,77 @@ class SyncEngine:
                     st.last_seen_at = now
                     self._notice(Severity.INFO, "withdrawn_confirmed", proof, st.item)
                     self.store.upsert(st, at=now)
+
+    def _with_study_plan(self, fetch: FetchResult, known: dict[str, ItemState], now: datetime) -> FetchResult:
+        """Lernplan: derive STUDY items from the exams of a COMPLETE exams category (regenerated on every fetch, so an
+        exam move updates the same tasks). Sessions already in the past are not created. A withdrawn exam withdraws them too."""
+        r = self.cfg.rules
+        outcome = fetch.categories.get(Category.EXAMS)
+        if outcome is None or outcome.status != CategoryStatus.OK:
+            return fetch
+        today = today_vienna(now)
+        withdrawn = dict(fetch.withdrawn)
+        exams = [i for i in fetch.items if i.source == fetch.source and i.kind == Kind.EXAM]
+        derived = rules.study_items(exams, r)
+        wanted = {item.uid for item in derived}
+        known_exams = {item.uid for item in exams}
+        for st in known.values():
+            if st.item.kind != Kind.STUDY:
+                continue
+            parent = rules.study_parent_uid(st.item)
+            if parent in fetch.withdrawn:
+                withdrawn.setdefault(st.uid, fetch.withdrawn[parent])
+            elif (parent in known_exams and st.uid not in wanted and st.task_state == TaskState.OPEN
+                  and st.task_due is not None and st.task_due >= today):
+                withdrawn.setdefault(st.uid, "Nicht mehr Teil des eingestellten Lernplans.")
+        for it in derived:
+            proof = fetch.withdrawn.get(rules.study_parent_uid(it))
+            if proof is not None:
+                withdrawn[it.uid] = proof
+        derived = [it for it in derived if it.uid in known or rules.task_start_date(it, r) >= today]
+        return dataclasses.replace(fetch, items=[*fetch.items, *derived], withdrawn=withdrawn)
+
+    def _match_study_children(
+        self, items: list[SourceItem], known: dict[str, ItemState], adopt: dict[str, ItemState],
+        defer: set[str], fetch: FetchResult, now: datetime,
+    ) -> FetchResult:
+        """Carry the existing sessions with an adopted exam identity, without creating duplicates."""
+        children = [item for item in items if item.kind == Kind.STUDY]
+        for child in children:
+            if rules.study_parent_uid(child) in defer:
+                defer.add(child.uid)
+        withdrawn = dict(fetch.withdrawn)
+        busy = {intent.uid for intent in self.store.open_intents(fetch.source)}
+        for new_uid, old_exam in list(adopt.items()):
+            if old_exam.item.kind != Kind.EXAM:
+                continue
+            old_children = {
+                rules.study_days(st.item): st for st in known.values()
+                if st.item.kind == Kind.STUDY and rules.study_parent_uid(st.item) == old_exam.uid
+            }
+            new_children = [child for child in children if rules.study_parent_uid(child) == new_uid]
+            if any(st.uid in busy for st in old_children.values()):
+                del adopt[new_uid]
+                defer.add(new_uid)
+                defer.update(child.uid for child in new_children)
+                continue
+            new_exam = next(item for item in items if item.uid == new_uid)
+            if new_exam.status == ItemStatus.CANCELLED or new_uid in withdrawn:
+                defer.update(child.uid for child in new_children)
+                for st in old_children.values():
+                    withdrawn[st.uid] = "Prüfung wurde abgesagt."
+                continue
+            wanted = set()
+            for child in new_children:
+                offset = rules.study_days(child)
+                wanted.add(offset)
+                if child.uid not in known and offset in old_children:
+                    adopt[child.uid] = old_children[offset]
+            for offset, st in old_children.items():
+                if (offset not in wanted and st.task_state == TaskState.OPEN and st.task_due is not None
+                        and st.task_due >= today_vienna(now)):
+                    withdrawn[st.uid] = "Nicht mehr Teil des eingestellten Lernplans."
+        return dataclasses.replace(fetch, withdrawn=withdrawn)
 
     def _dedupe(self, fetch: FetchResult, known: dict[str, ItemState]) -> list[SourceItem]:
         """Same content (dedupe_key) under another uid inside one fetch = one NEW item. Known uids win and are NEVER dropped:
@@ -544,16 +620,17 @@ class SyncEngine:
         new = dataclasses.replace(
             old, item=item, item_hash=item.content_hash(), cancelled=cancelled, last_seen_at=now, dirty=True, id_uncertain=True
         )
+        if item.kind == Kind.STUDY and old.task_state == TaskState.OPEN:
+            previous = old.task_removed_reason or ""
+            new.task_removed_reason = previous if previous.startswith(_STUDY_ADOPT) else _STUDY_ADOPT + old.uid
         self.store.delete_item(old.uid)
         self.store.upsert(new, at=now)
 
     def _ingest_new(self, item: SourceItem, fetch: FetchResult, window: Any, now: datetime) -> None:
-        if item.uid in fetch.withdrawn:
-            self._count_skip(item, "already_cancelled")
-            return
-        ok, reason = rules.new_item_verdict(item, now, window)
+        ok, reason = (False, "already_cancelled") if item.uid in fetch.withdrawn else rules.new_item_verdict(item, now, window)
         if not ok:
-            self._count_skip(item, reason)  # skipped new items are NOT stored
+            if item.kind != Kind.STUDY:  # Lernplan sessions that are not created stay silent
+                self._count_skip(item, reason)  # skipped new items are NOT stored
             return
         self.store.upsert(
             ItemState(item=item, item_hash=item.content_hash(), cancelled=False, first_seen_at=now, last_seen_at=now, dirty=True),
@@ -1261,6 +1338,12 @@ class SyncEngine:
             self._task_none(st, rules.plan_item(st, self._now, self.cfg.rules).task.reason)  # type: ignore[arg-type]
             return True
         assert rec is not None
+        adoption = st.task_removed_reason or ""
+        if st.item.kind == Kind.STUDY and adoption.startswith(_STUDY_ADOPT) and not self._blind():
+            old_uid = adoption[len(_STUDY_ADOPT):]
+            if task_marker_uid(rec) not in (old_uid, st.uid):
+                self._notice(Severity.WARNING, "study_adoption_uncertain", "Lernaufgabe nicht geändert: Ihre ursprüngliche Zuordnung ist nicht mehr eindeutig.", st.item)
+                return True
         notes = merge_description(task_notes(rec), d.managed_text, limit=TASK_NOTES_LIMIT, html=False)
         _forget_applied(self.store, st, Target.TASKS, due=plan.update_due)  # before the patch: outcome may stay unknown
         try:
@@ -1270,6 +1353,8 @@ class SyncEngine:
             self._skipped(st, Target.TASKS, "user_deleted")
             return True
         st.task_applied_hash, st.task_base_deadline, st.task_due = d.content_hash(), plan.base_deadline, plan.due
+        if adoption.startswith(_STUDY_ADOPT):
+            st.task_removed_reason = None
         self._save(st)
         self._applied(st, Target.TASKS, as_action or Action.UPDATE)
         return True
@@ -1305,6 +1390,14 @@ class SyncEngine:
         if self._apply_verdict(st, self._verdict(rec)):
             self._task_none(st, rules.plan_item(st, self._now, self.cfg.rules).task.reason)  # type: ignore[arg-type]
             return True
+        if st.item.kind == Kind.STUDY and not self._blind():
+            try:
+                due = date.fromisoformat(str(rec.get("due", ""))[:10])
+            except (ValueError, TypeError):
+                due = None
+            if task_marker_uid(rec) != st.uid or due is None or due < today_vienna(self._now):
+                self._notice(Severity.WARNING, "study_cleanup_uncertain", "Lernaufgabe nicht entfernt: Zuordnung oder Datum ist nicht eindeutig.", st.item)
+                return True
         intent = self._open_intent(st.uid, Target.TASKS, "delete", st.task_id, None)
         self._leave_removal_trace(st, rec)
         try:

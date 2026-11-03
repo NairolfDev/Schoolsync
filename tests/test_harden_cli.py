@@ -342,7 +342,7 @@ class TestWatchdog:
         assert hang.exit_codes == [3]
         assert hang.exited_at - hang.started_at >= 0.55  # run_timeout_seconds + grace, not earlier
         report = paths.reports / "bericht-2026-10-14.html"
-        assert report.is_file() and opened == [report]
+        assert report.is_file() and opened == []
         text = report.read_text(encoding="utf-8")
         assert "Fehlgeschlagen" in text and "timeout" in text and "hart abgebrochen" in text
         assert "Internetverbindung" in text and "schulsync check" in text  # the specific next step of H9, not the generic one
@@ -383,7 +383,7 @@ class TestWatchdog:
         run_cli(env, "run")
         assert hang.exit_codes == [3]
         assert "Manuell" in (paths.reports / "bericht-2026-10-14.html").read_text(encoding="utf-8")
-        assert "hart abgebrochen" in io.out  # the user at the console is told as well
+        assert "hart abgebrochen" not in io.out  # no notification on the first failure
 
     def test_the_process_still_ends_when_the_report_cannot_be_written(self, env, io, paths, config_file, monkeypatch):
         hang = watched(env, paths, monkeypatch)
@@ -397,12 +397,13 @@ class TestWatchdog:
         run_cli(env, "run", "--auto")
         assert hang.exit_codes == [3]
 
-    def test_the_timeout_report_opens_only_once_per_day(self, env, io, paths, config_file, monkeypatch, opened):
-        for _ in range(2):
+    def test_the_timeout_report_opens_after_three_failures_only_once(self, env, io, paths, config_file, monkeypatch, opened, clock):
+        for _ in range(4):
             hang = watched(env, paths, monkeypatch)
             run_cli(env, "run", "--auto")
             assert hang.exit_codes == [3]
-        assert len(opened) == 1  # same kind of error, same day: the report is refreshed, no second tab
+            clock.now += timedelta(hours=1)
+        assert len(opened) == 1
 
     def test_preview_and_other_commands_have_no_watchdog(self, env, io, paths, config_file, monkeypatch):
         set_config_value(paths.config, "retry", "run_timeout_seconds", 0.1)
@@ -528,20 +529,22 @@ class TestUnreadableDatabase:
         env.build_deps = lambda p, c, s: make_deps(p, c)
         assert main(["run", "--auto"], env=env) == 2
         report = paths.reports / "bericht-2026-10-14.html"
-        assert opened == [report] and report.is_file()
+        assert opened == [] and report.is_file()
         assert "Zustandsdatenbank" in report.read_text(encoding="utf-8")
+        clock.now += timedelta(hours=1)
         assert main(["run", "--auto"], env=env) == 2
-        assert len(opened) == 1  # the same problem again: report refreshed, no second tab
-        clock.now = clock.now + timedelta(days=1)
+        assert len(opened) == 0
+        clock.now += timedelta(hours=1)
         assert main(["run", "--auto"], env=env) == 2
-        assert len(opened) == 2  # next day: shown again
+        assert len(opened) == 1
 
     def test_run_manual_with_an_unreadable_database_is_a_german_config_error(self, env, io, paths, config_file, monkeypatch):
         corrupt_db(paths)
         monkeypatch.setattr(runner, "run", lambda *a, **k: pytest.fail("the runner must not run"))
         env.build_deps = lambda p, c, s: make_deps(p, c)
         assert main(["run"], env=env) == 2
-        assert "Zustandsdatenbank" in io.out and "Hinweis:" in io.out
+        assert not io.out
+        assert "Zustandsdatenbank" in (paths.reports / "bericht-2026-10-14.html").read_text(encoding="utf-8")
 
     def test_a_busy_database_is_not_taken_for_a_broken_one(self, env, io, paths, config_file, monkeypatch):
         paths.db.write_bytes(b"")  # exists, so the probe runs

@@ -15,7 +15,7 @@ Important design points:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import re
 from datetime import date, datetime, time
 from enum import StrEnum
@@ -35,6 +35,7 @@ from .models import (
     Source,
     SourceItem,
     TaskState,
+    make_uid,
 )
 from .timeutil import UTC, Window, add_real_minutes, make_local, minus_calendar_days, plus_calendar_days, to_vienna, today_vienna
 
@@ -103,9 +104,39 @@ def lead_days(kind: Kind, cfg: RulesConfig) -> int | None:
         return cfg.assignment_lead_days
     if kind == Kind.HOMEWORK:
         return cfg.homework_lead_days
-    if kind == Kind.EXAM:
+    if kind in (Kind.EXAM, Kind.STUDY):  # STUDY: only "has a task"; its date comes from study_days()
         return cfg.exam_lead_days
     return None
+
+
+STUDY_SEP = "#lern"
+
+
+def study_days(item: SourceItem) -> int:
+    """Days before the exam of a derived STUDY item (encoded in its source_id: '<exam-id>#lern<d>')."""
+    return int(item.source_id.rsplit(STUDY_SEP, 1)[1])
+
+
+def study_parent_uid(item: SourceItem) -> str:
+    return make_uid(item.source, Kind.EXAM, item.source_id.rsplit(STUDY_SEP, 1)[0])
+
+
+def study_offsets(cfg: RulesConfig) -> list[int]:
+    """Lerntermine vor der Prüfung ohne die bereits vorhandene normale Lernaufgabe."""
+    if cfg.study_every_days <= 0:
+        return []
+    return [d for d in range(cfg.study_start_days, 0, -cfg.study_every_days) if d != cfg.exam_lead_days]
+
+
+def study_items(exams: list[SourceItem], cfg: RulesConfig) -> list[SourceItem]:
+    """Derived Lernplan items: one per offset d = start, start-x, ... (d > 0, not exam_lead_days) per active-or-cancelled exam."""
+    offsets = study_offsets(cfg)
+    return [
+        replace(e, kind=Kind.STUDY, source_id=f"{e.source_id}{STUDY_SEP}{d}", subtype="Lernplan", id_stable=True, submitted=None, attempt=None)
+        for e in exams
+        if e.kind == Kind.EXAM
+        for d in offsets
+    ]
 
 
 def deadline_of(item: SourceItem) -> datetime | date:
@@ -167,6 +198,8 @@ def task_start_date(item: SourceItem, cfg: RulesConfig) -> date:
         d = deadline_of(item)
         dt = to_vienna(d) if isinstance(d, datetime) else make_local(d, time(23, 59))
         return add_real_minutes(dt, -60 * cfg.assignment_lead_hours).date()
+    if item.kind == Kind.STUDY:
+        return minus_calendar_days(item.when.start_date, study_days(item))
     lead = lead_days(item.kind, cfg)
     assert lead is not None
     return minus_calendar_days(item.when.start_date, lead)
@@ -327,8 +360,16 @@ def build_desired_task(item: SourceItem, cfg: RulesConfig, due: date) -> Desired
     lead = lead_days(item.kind, cfg)
     if lead is None:
         raise ValueError(f"no task for kind {item.kind.value}")
-    exam = item.kind == Kind.EXAM
+    study = item.kind == Kind.STUDY
+    exam = item.kind == Kind.EXAM or study
     title = ("Lernen: " if exam else "Bearbeiten: ") + _title(item)
+    if study:
+        d = study_days(item)
+        title += f" (noch {'1 Tag' if d == 1 else f'{d} Tage'})"
+        lines = [_when_line(item), f"Lernplan: noch {'1 Tag' if d == 1 else f'{d} Tage'} bis zur Prüfung"]
+        lines.extend(_detail_lines(item))
+        lines.append(tb.task_marker_line(task_key(item)))
+        return DesiredTask(title=tb.clip(title, tb.TITLE_LIMIT), managed_text="\n".join(lines), due=due)
     work_start = task_start_date(item, cfg)
     if item.kind == Kind.ASSIGNMENT and cfg.assignment_lead_hours:
         rel = f"{cfg.assignment_lead_hours} Stunden vor der Frist"
@@ -352,7 +393,7 @@ def build_desired_task(item: SourceItem, cfg: RulesConfig, due: date) -> Desired
 def _plan_event(state: ItemState, now: datetime, cfg: RulesConfig) -> EventPlan:
     """DESIGN 4.1."""
     item, cancelled = state.item, state.cancelled
-    if item.kind == Kind.ASSIGNMENT and not cfg.assignment_calendar:  # Eduvidual-Aufgaben: nur Task
+    if item.kind == Kind.STUDY or (item.kind == Kind.ASSIGNMENT and not cfg.assignment_calendar):  # nur Task
         if state.event_state == EventState.ACTIVE and state.event_id:
             return EventPlan(EventAction.DELETE, Action.REMOVE_EVENT, reason="tasks_only")
         return EventPlan(EventAction.SKIP, reason="no_event_for_kind")
@@ -400,7 +441,9 @@ def _plan_task(state: ItemState, now: datetime, cfg: RulesConfig) -> TaskPlan:
     today = today_vienna(now)
     past = is_fully_past(item, now)
     base = deadline_iso(item)
-    due_new = max(task_start_date(item, cfg), today)
+    study = item.kind == Kind.STUDY
+    study_late = study and task_start_date(item, cfg) < today  # Lernplan never uses "late discovery": a passed session is not (re)created
+    due_new = task_start_date(item, cfg) if study else max(task_start_date(item, cfg), today)
 
     def create(reason: str) -> TaskPlan:
         return TaskPlan(
@@ -410,7 +453,7 @@ def _plan_task(state: ItemState, now: datetime, cfg: RulesConfig) -> TaskPlan:
     if ts == TaskState.REMOVED:
         if cancelled:
             return TaskPlan(TaskAction.NONE, reason="removed_cancelled")
-        if not past:
+        if not past and not study_late:
             return create("reactivated")
         return TaskPlan(TaskAction.NONE, reason="expired")
     if returned:
@@ -418,7 +461,7 @@ def _plan_task(state: ItemState, now: datetime, cfg: RulesConfig) -> TaskPlan:
     if ts == TaskState.NONE:
         if cancelled:
             return TaskPlan(TaskAction.NONE, reason="already_cancelled")
-        if past:
+        if past or study_late:
             return TaskPlan(TaskAction.NONE, reason="expired")
         if item.submitted:
             return TaskPlan(TaskAction.NONE, reason="submitted")
@@ -431,7 +474,7 @@ def _plan_task(state: ItemState, now: datetime, cfg: RulesConfig) -> TaskPlan:
         return TaskPlan(TaskAction.COMPLETE, reason="submitted")
     kept_due = state.task_due if state.task_due is not None else due_new
     if state.task_base_deadline is not None and state.task_base_deadline != base:
-        if past:  # moved into the past: keep the due date, refresh title/notes only
+        if past or study_late:  # moved into the past: keep the due date, refresh title/notes only
             return TaskPlan(
                 TaskAction.UPDATE, build_desired_task(item, cfg, kept_due), False, base, kept_due, "deadline_changed"
             )

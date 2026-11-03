@@ -167,7 +167,7 @@ class TestAuthBlocking:
         env.set_items(S.assignment(), S.exam())
         env.adapters[WU].login_fails(ErrorInfo("access_denied", "WebUntis verweigert den Zugriff."))
         env.run()
-        assert env.state.is_auth_blocked(WU) and not env.state.is_auth_blocked(EDU)
+        assert not env.state.is_auth_blocked(WU) and not env.state.is_auth_blocked(EDU)
 
 
 class TestTabFloodFile:
@@ -178,6 +178,10 @@ class TestTabFloodFile:
         leftover.write_text("{kaputt", encoding="utf-8")
         env.set_items(S.assignment(), S.exam())
         env.adapters[WU].login_fails(ErrorInfo("schema", "WebUntis-Anmeldeseite unerwartet."))
+        env.run()
+        env.advance(hours=1)
+        env.run()
+        env.advance(hours=1)
         out = env.run()
         assert out.report_path is not None and len(env.opened) == 1
         assert leftover.read_text(encoding="utf-8") == "{kaputt"  # untouched: nobody reads or writes it any more

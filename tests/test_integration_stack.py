@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from schulsync import cli, factories, google_auth, runner
-from schulsync.config import Config, EduvidualConfig, GoogleConfig, Paths, RulesConfig, WebUntisConfig, set_config_value
+from schulsync.config import Config, EduvidualConfig, GoogleConfig, Paths, RetryConfig, RulesConfig, WebUntisConfig, set_config_value
 from schulsync.models import OverallStatus, RunMode, Source, SourceStatus
 from schulsync.redact import clear_registered_secrets
 from schulsync.secrets_store import MemorySecretStore
@@ -54,6 +54,7 @@ class Stack:
             webuntis=WebUntisConfig(username="beispiel.max"),
             google=GoogleConfig(calendar_id="cal-id", tasklist_id="list-id"),
             rules=RulesConfig(window_days=21, assignment_lead_days=3, assignment_lead_hours=0, assignment_calendar=True),
+            retry=RetryConfig(failures_before_report=1),
         )
         self.secrets = MemorySecretStore({factories.SECRET_EDUVIDUAL: EDU_PASSWORD, factories.SECRET_WEBUNTIS: WU_PASSWORD})
 
@@ -193,17 +194,18 @@ def test_rejected_login_blocks_only_that_source_and_is_never_retried(stack):
     assert rep.sources[EDU].status == SourceStatus.FAILED and rep.sources[WU].status == SourceStatus.SUCCESS
     assert len(stack.http.calls(r"/login/token\.php")) == 1 and stack.sleeps == []  # one attempt, no waiting, no retry
     assert [e.code for e in rep.sources[EDU].errors] == ["auth"]
-    assert len(stack.opened) == 1  # a problem: the report opens once
+    assert len(stack.opened) == 0  # first failure stays silent
     assert len(stack.google.events) > 0  # the other source was written
     with stack.state() as st:
-        assert st.is_auth_blocked(EDU) and not st.is_auth_blocked(WU)
+        assert not st.is_auth_blocked(EDU) and not st.is_auth_blocked(WU)
         assert st.all_items() and all(i.item.source == WU for i in st.all_items())  # EDU never produced anything
 
-    # next logon the same day: the blocked source is skipped without any login attempt, the report is not opened again
+    # The next whole run retries the failed source once after one hour.
     n_tokens = len(stack.http.calls(r"/login/token\.php"))
+    stack.now += timedelta(hours=1)
     again = stack.go(RunMode.AUTO)
-    assert len(stack.http.calls(r"/login/token\.php")) == n_tokens and again.exit_code == 1
-    assert "überspringen" in again.console_text and len(stack.opened) == 1
+    assert len(stack.http.calls(r"/login/token\.php")) == n_tokens + 1 and again.exit_code == 1
+    assert len(stack.opened) == 0
 
     # the user fixes the password; a manual run tries again, succeeds, and lifts the block
     token_route.handler = json_response(jf("token_ok.json"))
@@ -239,10 +241,11 @@ def test_network_outage_cancels_and_deletes_nothing_and_the_next_start_recovers(
         assert not st.is_auth_blocked(EDU) and not st.is_auth_blocked(WU)  # an outage is not a rejected login
         today = st.get_source_day(stack.now.date(), EDU)
         assert today is None or not today.done  # a failed fetch is no day success
-    assert len(stack.opened) == 1
+    assert len(stack.opened) == 0
 
     stack.http.fail_network = False
     stack.sleeps.clear()
+    stack.now += timedelta(hours=1)
     up = stack.go(RunMode.AUTO)  # the next logon the same day
     assert up.exit_code == 0 and up.report.status == OverallStatus.SUCCESS and stack.sleeps == []
     assert all(stack.google.events[k] == v for k, v in snapshot.items())  # every known entry is untouched

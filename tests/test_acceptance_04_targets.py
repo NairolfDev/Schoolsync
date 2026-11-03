@@ -60,7 +60,7 @@ def test_an_unavailable_calendar_schule_is_never_replaced_by_the_primary_calenda
     assert len(g.tasks) == 3 and {c.target for c in out.report.changes if c.status == ChangeStatus.DEFERRED} == {Target.CALENDAR}
     assert out.report.tasks_target.ok is True and out.report.calendar_target.ok is False
     assert out.report.pending_writes >= 1
-    assert w.rec.opened == [out.report_path]
+    assert w.rec.opened == []
     html = read_report(out)
     assert "nie auf einen anderen Kalender" in html  # the report says what was NOT done
     with w.store() as st:
@@ -90,7 +90,7 @@ def test_a_missing_task_list_defers_the_task_writes_and_never_uses_another_list(
     # ... and only those: the calendar "Schule" is reachable, so its four entries are written, none of them deferred
     assert len(g.events) == 4 and {c.target for c in out.report.changes if c.status == ChangeStatus.DEFERRED} == {Target.TASKS}
     assert out.report.calendar_target.ok is True and out.report.tasks_target.ok is False
-    assert w.rec.opened == [out.report_path]
+    assert w.rec.opened == []
 
     g.tasklist_exists = True
     again = w.start(at=LATER)
@@ -109,7 +109,7 @@ def test_an_expired_google_login_is_reported_with_the_renewal_steps_and_nothing_
 
     assert out.exit_code == 1 and out.report.status in (OverallStatus.PARTIAL, OverallStatus.FAILED)
     assert world.google.write_log == []
-    assert world.rec.opened == [out.report_path]
+    assert world.rec.opened == []
     html = read_report(out)
     assert "Google-Anmeldung erneuern" in html  # understandable next step
     assert "7 Tagen" in html  # the Testing-status expiry is explained, no unlimited validity is promised

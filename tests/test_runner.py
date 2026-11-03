@@ -239,15 +239,16 @@ class TestFetchAndRetries:
         assert out.exit_code == 1 and out.report.status == OverallStatus.PARTIAL
         assert sources(out, EDU).status == SourceStatus.SUCCESS and sources(out, WU).status == SourceStatus.FAILED
         assert sources(out, WU).errors[0].code == "transient" and sources(out, WU).stale and not sources(out, EDU).stale
-        assert env.opened == [out.report_path]  # one tab, after all retries
+        assert env.opened == []  # first failed run stays quiet
         assert env.state.day_done(DAY, EDU) and not env.state.day_done(DAY, WU) and not env.state.is_auth_blocked(WU)
         assert env.state.get_source_status(WU).last_error_code == "transient"
         assert len(env.google.events) == 1  # what worked is already in Google
         env.sleeps.clear()
-        out2 = env.run()  # next start the same day: only the failed part is tried again
-        assert env.fetch_calls(EDU) == 1 and env.fetch_calls(WU) == 5 and env.sleeps == []
-        assert out2.report.status == OverallStatus.SUCCESS and sources(out2, EDU).status == SourceStatus.ALREADY_DONE
-        assert len(env.google.events) == 2 and len(env.opened) == 1 and env.state.day_done(DAY, WU)
+        env.advance(hours=1)
+        out2 = env.run()  # the entire run is retried after one hour
+        assert env.fetch_calls(EDU) == 2 and env.fetch_calls(WU) == 5 and env.sleeps == []
+        assert out2.report.status == OverallStatus.SUCCESS and sources(out2, EDU).status == SourceStatus.SUCCESS
+        assert len(env.google.events) == 2 and len(env.opened) == 0 and env.state.day_done(DAY, WU)
 
     def test_transient_failures_that_heal_within_the_attempts_are_a_success(self, env):
         env.set_items(S.assignment())
@@ -268,17 +269,15 @@ class TestFetchAndRetries:
         env.adapters[WU].raise_next(AuthError("Benutzername oder Passwort abgelehnt."))
         out = env.run()
         assert env.fetch_calls(WU) == 1 and env.sleeps == []
-        assert env.state.is_auth_blocked(WU) and not env.state.is_auth_blocked(EDU)
-        assert env.state.get_source_status(WU).auth_block_code == "auth"
+        assert not env.state.is_auth_blocked(WU) and not env.state.is_auth_blocked(EDU)
+        assert env.state.get_source_status(WU).last_error_code == "auth"
         assert sources(out, EDU).status == SourceStatus.SUCCESS and sources(out, WU).status == SourceStatus.FAILED
         assert out.report.status == OverallStatus.PARTIAL and len(env.google.events) == 1
-        # the next AUTO starts skip the blocked source, with an explicit entry; no tab flood
+        assert env.run().silent  # no retry before one hour
+        env.advance(hours=1)
         out2 = env.run()
-        assert env.fetch_calls(WU) == 1 and sources(out2, EDU).status == SourceStatus.ALREADY_DONE
-        err = sources(out2, WU).errors[0]
-        assert err.code == "auth" and "überspringen" in err.message and "schulsync setup --webuntis" in err.hint
-        assert not out2.silent and out2.report is not None and len(env.opened) == 1 and out2.exit_code == 1
-        assert any("schulsync setup --webuntis" in s for s in out2.report.next_steps)
+        assert env.fetch_calls(WU) == 2 and out2.report.status == OverallStatus.SUCCESS
+        assert len(env.opened) == 0
 
     def test_manual_run_retries_a_blocked_source_and_a_success_unblocks_it(self, env):
         env.set_items(S.assignment(), S.exam())
@@ -293,12 +292,12 @@ class TestFetchAndRetries:
         env.adapters[WU].raise_next(AuthError("abgelehnt"), times=2)
         env.run()
         out = env.run(MANUAL)
-        assert env.fetch_calls(WU) == 2 and env.state.is_auth_blocked(WU) and out.exit_code == 1
+        assert env.fetch_calls(WU) == 2 and not env.state.is_auth_blocked(WU) and out.exit_code == 1
 
     def test_rejected_login_in_the_fetch_result_blocks_without_retry(self, env):
         env.adapters[WU].login_fails(ErrorInfo("auth", "Anmeldung abgelehnt."))
         out = env.run()
-        assert env.fetch_calls(WU) == 1 and env.sleeps == [] and env.state.is_auth_blocked(WU)
+        assert env.fetch_calls(WU) == 1 and env.sleeps == [] and not env.state.is_auth_blocked(WU)
         assert sources(out, WU).errors[0].code == "auth" and all(oc.status == CategoryStatus.FAILED for oc in sources(out, WU).categories.values())
         assert out.report.status == OverallStatus.PARTIAL and not env.state.day_done(DAY, WU)
 
@@ -310,12 +309,14 @@ class TestFetchAndRetries:
         if how == "login_error":
             env.adapters[WU].login_fails(ErrorInfo("auth", "Anmeldung abgelehnt."))
         else:
-            env.adapters[WU].raise_next(AuthError("Anmeldung abgelehnt."))
+            env.adapters[WU].raise_next(AuthError("Anmeldung abgelehnt."), times=3)
         first = env.run()
         env.advance(hours=2)
-        second = env.run()  # a later logon the same day: WebUntis is skipped (blocked)
-        assert env.fetch_calls(WU) == 1 and second.report.fingerprint() == first.report.fingerprint()
-        assert env.opened == [first.report_path] and env.state.report_opened_fingerprint(DAY) == first.report.fingerprint()
+        second = env.run()
+        assert env.fetch_calls(WU) == 2 and env.opened == []
+        env.advance(hours=1)
+        third = env.run()
+        assert env.fetch_calls(WU) == 3 and env.opened == [third.report_path]
 
     def test_login_error_that_is_a_schema_problem_does_not_block(self, env):
         env.adapters[WU].login_fails(ErrorInfo("schema", "Anmeldeseite unerwartet."))
@@ -337,6 +338,7 @@ class TestFetchAndRetries:
         assert not env.state.is_auth_blocked(WU) and sources(out, EDU).status == SourceStatus.SUCCESS
         assert out.report.status == OverallStatus.PARTIAL
         del env.factory_errors[WU]  # the user ran the setup: the next start works without any unblocking
+        env.advance(hours=1)
         assert env.run().report.status == OverallStatus.SUCCESS
 
     def test_source_without_a_factory_fails_clearly(self, env):
@@ -354,10 +356,11 @@ class TestFetchAndRetries:
         assert not env.google.events[eid(x)]["summary"].startswith("Abgesagt")
         assert sources(out, WU).status == SourceStatus.PARTIAL and out.report.status == OverallStatus.PARTIAL
         assert not env.state.day_done(DAY, WU) and env.state.get_source_day(DAY, WU).fetch_complete is False
-        assert env.opened == [out.report_path]
+        assert env.opened == []
         env.adapters[WU].heal_category(Category.EXAMS)
-        out2 = env.run()  # AUTO: the incomplete part is fetched again, the finished source is not
-        assert (env.fetch_calls(EDU), env.fetch_calls(WU)) == (2, 3)
+        env.advance(hours=1)
+        out2 = env.run()  # the whole run is retried
+        assert (env.fetch_calls(EDU), env.fetch_calls(WU)) == (3, 3)
         assert out2.report.status == OverallStatus.SUCCESS and env.state.day_done(DAY, WU)
 
     def test_last_success_and_stale_after_a_later_failure(self, env):
@@ -385,7 +388,7 @@ class TestGoogleSide:
         e.set_items(S.assignment(), S.exam())
         out = e.run()
         assert {w[0] for w in e.google.write_log} == {"insert_task"} and e.google.misrouted_writes() == [] and e.google.primary_events == {}
-        assert out.exit_code == 1 and out.report.status != OverallStatus.SUCCESS and e.opened == [out.report_path]
+        assert out.exit_code == 1 and out.report.status != OverallStatus.SUCCESS and e.opened == []
         assert out.report.calendar_target.ok is False and out.report.calendar_target.error.code == "target_unavailable"
         assert out.report.tasks_target.ok is True
         assert len(out.report.changes) == 4
@@ -422,8 +425,9 @@ class TestGoogleSide:
         assert e.state.pending_count() == 2
         e.google.calendar_exists = True
         e.opened.clear()
-        out = e.run()  # only the missing writes: no refetch
-        assert (e.fetch_calls(EDU), e.fetch_calls(WU)) == (1, 1)
+        e.advance(hours=1)
+        out = e.run()  # retry the entire run
+        assert (e.fetch_calls(EDU), e.fetch_calls(WU)) == (2, 2)
         assert out.report.status == OverallStatus.SUCCESS and e.state.day_done(DAY, EDU) and e.state.day_done(DAY, WU)
         assert sources(out, EDU).status == SourceStatus.SUCCESS and sources(out, EDU).calendar.new == 1
         assert len(e.google.events) == 2 and len(e.google.open_tasks) == 2 and e.opened == []
@@ -438,7 +442,8 @@ class TestGoogleSide:
         assert out.report.status == OverallStatus.FAILED and out.report.calendar_target.error.code == "network"
         assert env.state.get_source_day(DAY, EDU).fetch_complete
         env.google.clear_faults()
-        assert env.run().report.status == OverallStatus.SUCCESS and env.fetch_calls(EDU) == 1
+        env.advance(hours=1)
+        assert env.run().report.status == OverallStatus.SUCCESS and env.fetch_calls(EDU) == 2
 
     def test_google_auth_failure_defers_with_an_actionable_report(self, env):
         env.set_items(S.assignment())
@@ -458,9 +463,10 @@ class TestGoogleSide:
         assert len(env.google.events) == 1 and env.google.tasks == [] and sources(out, EDU).tasks.failed == 1
         assert sources(out, EDU).status == SourceStatus.PARTIAL and sources(out, EDU).calendar.new == 1
         env.google.clear_faults()
+        env.advance(hours=1)
         out2 = env.run()
         assert out2.report.status == OverallStatus.SUCCESS and len(env.google.open_tasks) == 1
-        assert len(env.google.writes("insert_event")) == 1 and env.fetch_calls(EDU) == 1
+        assert len(env.google.writes("insert_event")) == 1 and env.fetch_calls(EDU) == 2
 
     def test_lost_response_then_next_start_creates_no_duplicates(self, env):
         env.set_items(S.assignment())
@@ -489,6 +495,7 @@ class TestGoogleSide:
         assert out.exit_code == 1 and any(c.error is not None and c.error.code == "unexpected" for c in out.report.changes)
         assert not env.state.day_done(DAY, EDU)
         monkeypatch.setattr(StateStore, "resolve_intent", real)
+        env.advance(hours=1)
         out2 = env.run()
         assert out2.report.status == OverallStatus.SUCCESS
         assert len(env.google.events) == 1 and len(env.google.tasks) == 1
@@ -613,8 +620,9 @@ class TestWaitingAndLimits:
         assert e.google.write_log == [] and {c.error.code for c in out.report.changes} == {"run_timeout"}
         assert out.exit_code == 1 and any("Zeitlimit" in s for s in out.report.next_steps)
         e.adapters[EDU].fetch = orig
-        out2 = e.run()  # the next start: Eduvidual only writes, WebUntis is fetched
-        assert e.fetch_calls(EDU) == 1 and e.fetch_calls(WU) == 1 and out2.report.status == OverallStatus.SUCCESS
+        e.advance(hours=1)
+        out2 = e.run()  # retry the entire run
+        assert e.fetch_calls(EDU) == 2 and e.fetch_calls(WU) == 1 and out2.report.status == OverallStatus.SUCCESS
         assert len(e.google.events) == 2
 
     def test_run_timeout_cuts_the_retries_short(self, make_env):
@@ -649,29 +657,38 @@ class TestReportAndBrowser:
         env.adapters[WU].raise_next(TransientError("Zeitüberschreitung bei WebUntis."), times=times)
 
     def test_the_same_failure_opens_one_tab_per_day_but_refreshes_the_file(self, env):
-        self._failing(env, times=8)
+        self._failing(env, times=16)
         first = env.run()
         text1 = first.report_path.read_text(encoding="utf-8")
         env.advance(hours=1)
-        second = env.run()
-        text2 = second.report_path.read_text(encoding="utf-8")
-        assert env.opened == [first.report_path] and second.report_path == first.report_path
-        assert "08:00:00" in text1 and "09:00:00" in text2 and text1 != text2  # refreshed, no new tab
-        assert env.state.report_opened_fingerprint(DAY) == first.report.fingerprint()
+        env.run()
+        env.advance(hours=1)
+        third = env.run()
+        text3 = third.report_path.read_text(encoding="utf-8")
+        env.advance(hours=1)
+        env.run()
+        assert env.opened == [third.report_path] and third.report_path == first.report_path
+        assert "08:00:00" in text1 and "10:00:00" in text3 and text1 != text3
+        assert env.state.report_opened_fingerprint(DAY) == third.report.fingerprint()
 
     def test_a_different_problem_opens_the_report_again(self, env):
-        self._failing(env, times=4)
-        env.run()
-        env.adapters[WU].raise_next(AuthError("abgelehnt"))
-        env.run()
+        self._failing(env, times=12)
+        for _ in range(3):
+            env.run(MANUAL)
+        assert len(env.opened) == 1
+        env.adapters[WU].raise_next(AuthError("abgelehnt"), times=3)
+        for _ in range(3):
+            env.run(MANUAL)
         assert len(env.opened) == 2
 
     def test_a_new_day_opens_a_new_tab(self, env):
-        self._failing(env, times=8)
-        env.run()
+        self._failing(env, times=24)
+        for _ in range(3):
+            env.run(MANUAL)
+        assert len(env.opened) == 1
         env.advance(days=1)
-        env.run()
-        assert len(env.opened) == 2 and env.opened[0] != env.opened[1]
+        env.run(MANUAL)
+        assert len(env.opened) == 1  # same continuous failure is not reported again
 
     def test_open_on_never_writes_the_report_but_opens_nothing(self, make_env):
         e = make_env(cfg=cfg(report=ReportConfig(open_on="never")))
@@ -697,16 +714,19 @@ class TestReportAndBrowser:
         assert out.report.status == OverallStatus.SUCCESS and env.opened == []
 
     def test_failed_browser_start_is_logged_and_retried_next_time(self, env, logs):
-        self._failing(env, times=12)
+        self._failing(env, times=20)
         env.open_result = False
-        out = env.run()
+        quiet = lambda *args: False
+        env.run(MANUAL, notify=quiet)
+        env.run(MANUAL, notify=quiet)
+        out = env.run(MANUAL, notify=quiet)
         assert env.opened == [out.report_path] and out.report_path.is_file()
-        assert str(out.report_path) in logs.text  # the location of the kept report is logged
-        assert env.state.report_opened_fingerprint(DAY) is None  # not recorded: a later start may succeed
+        assert str(out.report_path) in logs.text
+        assert env.state.report_opened_fingerprint(DAY) is None
         env.open_result = True
-        env.run()
+        env.run(MANUAL, notify=quiet)
         assert len(env.opened) == 2 and env.state.report_opened_fingerprint(DAY) is not None
-        env.run()
+        env.run(MANUAL, notify=quiet)
         assert len(env.opened) == 2
 
     def test_a_crashing_opener_does_not_break_the_run(self, env):
@@ -801,7 +821,7 @@ class TestPreview:
         env.run()
         env.set_items(S.exam())
         out = env.run(PREVIEW)
-        assert env.state.is_auth_blocked(WU) and sources(out, WU).status == SourceStatus.SUCCESS and env.fetch_calls(WU) == 2
+        assert not env.state.is_auth_blocked(WU) and sources(out, WU).status == SourceStatus.SUCCESS and env.fetch_calls(WU) == 2
 
     def test_preview_without_a_google_login_is_still_possible_but_says_so(self, env):
         env.set_items(S.assignment())
@@ -849,9 +869,10 @@ class TestUnexpectedProblems:
         err = sources(out, EDU).errors[0]
         assert err.code == "unexpected" and "geheim1234" not in (err.detail or "") and "RuntimeError" in err.detail
         assert out.report_path.is_file() and "geheim1234" not in out.report_path.read_text(encoding="utf-8")
-        assert env.opened == [out.report_path] and "geheim1234" not in out.console_text
+        assert env.opened == [] and "geheim1234" not in out.console_text
         assert sources(out, WU).status == SourceStatus.SUCCESS  # the other source is fetched and written regardless
         assert not env.state.day_done(DAY, EDU) and env.state.day_done(DAY, WU)
+        env.advance(hours=1)
         out2 = env.run()  # the next start simply works
         assert out2.report.status == OverallStatus.SUCCESS and len(env.google.events) == 1
 
@@ -867,6 +888,7 @@ class TestUnexpectedProblems:
         assert out.report.status == OverallStatus.FAILED and sources(out, EDU).errors[0].code == "unexpected"
         assert env.state.get(a.uid).dirty and not env.state.day_done(DAY, EDU) and env.google.write_log == []
         monkeypatch.undo()
+        env.advance(hours=1)
         assert env.run().report.status == OverallStatus.SUCCESS and len(env.google.events) == 1
 
     def test_unreadable_database_is_a_configuration_error_with_a_report(self, env, tmp_path):

@@ -193,18 +193,18 @@ class TestRestoreOutput:
 class TestTabMemoryInTheDatabase:
     def test_a_b_a_opens_two_tabs_and_the_database_holds_both_fingerprints(self, env):
         env.set_items(S.assignment(), S.exam())
-        env.adapters[WU].login_fails(ErrorInfo("schema", "WebUntis-Anmeldeseite unerwartet."))  # problem A
-        first = env.run()
-        env.advance(hours=1)
-        env.adapters[WU].login_fails(ErrorInfo("incomplete", "WebUntis lieferte nur einen Teil."))  # problem B
-        second = env.run()
-        env.advance(hours=1)
-        env.adapters[WU].login_fails(ErrorInfo("schema", "WebUntis-Anmeldeseite unerwartet."))  # A again
-        env.run()
+        reports = []
+        for code, message in (("schema", "WebUntis-Anmeldeseite unerwartet."), ("incomplete", "WebUntis lieferte nur einen Teil."), ("schema", "WebUntis-Anmeldeseite unerwartet.")):
+            env.adapters[WU].login_fails(ErrorInfo(code, message))
+            for _ in range(3):
+                out = env.run()
+                env.advance(hours=1)
+            reports.append(out.report)
         assert len(env.opened) == 2
-        assert first.report.fingerprint() != second.report.fingerprint()
-        assert env.state.report_opened_fingerprints(DAY) == {first.report.fingerprint(), second.report.fingerprint()}
+        assert reports[0].fingerprint() != reports[1].fingerprint()
+        assert env.state.report_opened_fingerprints(DAY) == {reports[0].fingerprint(), reports[1].fingerprint()}
         assert not (env.paths.home / "report_opened.json").exists()
+
 
 
 # ====================================================================================== H9
@@ -240,7 +240,12 @@ class TestPlainTextFallback:
         assert out.exit_code == 1 and out.report_path == txt and txt.is_file()
         text = txt.read_text(encoding="utf-8")
         assert "WebUntis" in text and "Teilweise fehlgeschlagen" in text and "hunter2-dummy" not in text
-        assert env.opened == [txt]  # a FAILED run never shows nothing at all
+        assert env.opened == []
+        env.advance(hours=1)
+        env.run()
+        env.advance(hours=1)
+        env.run()
+        assert env.opened == [txt]  # show fallback after the third failure
         logged = "\n".join(r.getMessage() for r in logs.records)
         assert "konnte nicht gespeichert werden" in logged and "bericht-2026-10-14.html" in logged  # the path it was meant for
 

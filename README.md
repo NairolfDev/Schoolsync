@@ -368,13 +368,13 @@ schulsync autostart remove
 `schulsync autostart install` legt in der **Windows-Aufgabenplanung** eine Aufgabe namens **SchulSync** an:
 
 - **Anmeldetrigger** („Bei Anmeldung“) nur für **deinen** Benutzer, mit **etwa einer Minute Startverzögerung**,
-- zusätzlich **täglich um 6:00 und 18:00 Uhr**; war der PC da aus oder im Ruhezustand, holt Windows den Lauf beim nächsten Einschalten nach,
+- zusätzlich **täglich um 6:00 und 18:00 Uhr** und minütlich eine Fälligkeitsprüfung für ausstehende Wiederholungen; war der PC aus, wird ein überfälliger Versuch nach dem Start nachgeholt,
 - läuft **in deinem Benutzerkonto** in deiner angemeldeten Sitzung (damit sich bei Problemen ein Bericht in deinem Browser öffnen kann),
 - **ohne erhöhte Rechte**, kein Passwort nötig,
 - startet `pythonw.exe -m schulsync run --auto` aus der `.venv` (ohne Konsolenfenster),
 - die Aufgabe wird nach einer Stunde von Windows beendet; ein Lauf dauert normalerweise nur Sekunden.
 
-Es gibt **keine feste Uhrzeit**. Du siehst die Aufgabe in der Aufgabenplanung (Windows-Taste, „Aufgabenplanung“) in der Aufgabenplanungsbibliothek.
+Du siehst die Aufgabe in der Aufgabenplanung (Windows-Taste, „Aufgabenplanung“) in der Aufgabenplanungsbibliothek.
 Verschiebst du den SchulSync-Ordner oder die `.venv`, führe `schulsync autostart install` erneut aus.
 
 `schulsync autostart remove` entfernt **Aufgabe und Verknüpfung** (siehe unten). Das ist idempotent: Gibt es nichts, ist das kein Fehler.
@@ -385,7 +385,7 @@ Verschiebst du den SchulSync-Ordner oder die `.venv`, führe `schulsync autostar
 2. Optional: `schtasks /Query /TN SchulSync /XML` zeigt die gespeicherte Aufgabe.
 3. Melde dich bei Windows ab und wieder an. Etwa eine Minute später sollte in der Aufgabenplanung bei der Aufgabe „SchulSync“ das **Letzte Ergebnis 0** stehen,
    und `%LOCALAPPDATA%\SchulSync\logs\schulsync-JJJJ-MM-TT.log` enthält die Zeile „Befehl 'run' gestartet“.
-4. Teste den Fehlerfall: Internet trennen, `schulsync run --auto --force`: der Bericht öffnet sich einmal.
+4. `schulsync status` zeigt bei einem Fehler den nächsten Wiederholungszeitpunkt und die Fehlerzähler.
 
 ### Ausweichlösung: Verknüpfung im Startup-Ordner
 
@@ -393,7 +393,7 @@ Erlaubt dein PC (z. B. ein verwaltetes Schulgerät) keine eigene Aufgabe in der 
 **automatisch** eine **Autostart-Verknüpfung** ein: `SchulSync.lnk` im Startup-Ordner deines Benutzers
 (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`, öffnen mit Windows-Taste + R und `shell:startup`). Die Ausgabe sagt, dass die Verknüpfung benutzt wurde.
 
-Nachteil: Eine Verknüpfung kann den Start nicht verzögern. Das ist unkritisch, denn SchulSync wartet selbst bis zu zwei Minuten auf das Internet. Entfernen: `schulsync autostart remove`
+Die Verknüpfung startet bei der Anmeldung einen versteckten Hintergrund-Wächter, der minütlich fällige Läufe prüft. Entfernen: `schulsync autostart remove`
 (oder die Verknüpfung im Ordner `shell:startup` löschen).
 
 Klappt auch das nicht, nennt der Befehl die Handarbeit: Windows-Taste + R, `shell:startup`, im geöffneten Ordner mit der rechten Maustaste **Neu**, **Verknüpfung**, auf
@@ -412,8 +412,8 @@ Fehler **wenige Male mit wachsender Wartezeit** (Standard: 4 Versuche, 15/60/180
   Erledigtes doppelt anzulegen.
 - **Ohne Internet** nach der Anmeldung: Es wird gewartet und dann trotzdem versucht; was fehlt, kommt beim nächsten Start.
 - **Nach mehreren Tagen Aus:** Der aktuelle Stand wird **einmal** geprüft. Es gibt keine Serie nachgeholter Tagesläufe.
-- Eine **abgelehnte Anmeldung** wird **nicht endlos wiederholt**: Die Quelle wird für automatische Läufe gesperrt, bis ein manueller Lauf, `check` oder `setup` wieder klappt.
-- Eine **Prozesssperre** verhindert parallele Läufe. Dauert ein Lauf zu lange (Standard 25 Minuten), wird er hart beendet und gemeldet; der Rest folgt beim nächsten Start.
+- Ein fehlgeschlagener Lauf wird nach einer Stunde erneut versucht. Derselbe Fehler wird anhand von Dienst und Fehlerart gezählt; nach drei aufeinanderfolgenden Vorkommen erscheint der Fehlerbericht. Auch manuelle Läufe zählen. Nach dem Bericht wird weiter stündlich versucht, ohne identische Meldungen ständig zu wiederholen.
+- Eine **Prozesssperre** verhindert parallele Läufe. Dauert ein Lauf zu lange (Standard 25 Minuten), wird er hart beendet und als Fehlversuch gezählt; der Rest folgt beim nächsten Versuch.
 
 ### Eintragsarten
 
@@ -459,11 +459,34 @@ Nicht übernommen werden Supplierungen, reine Lehrkraft- oder Raumänderungen un
 - **Doppelte Einträge werden vermieden:** Gleiche Daten zweimal liefern nichts Neues. Ging bei einem Abbruch die Antwort von Google verloren, gleicht SchulSync vor dem erneuten Anlegen mit der eigenen
   Projektkennung ab. Löschst du die lokale Datenbank, erkennt SchulSync seine Einträge in Google wieder.
 
+### Einstellungen ändern: `schulsync settings`
+
+Die wichtigsten Regeln lassen sich ohne Bearbeiten der `config.toml` ändern (Voraussetzung: `schulsync setup` wurde einmal ausgeführt):
+
+```powershell
+schulsync settings                              # Menü: Nummer wählen, neuen Wert eingeben, leer = behalten, q = fertig
+schulsync settings --list                       # alle Einstellungen mit Wert, Standard, Hilfe und erlaubtem Bereich (keine Eingaben)
+schulsync study-preview                          # Lernaufgaben zu lokal bekannten Prüfungen ohne Google-Zugriff anzeigen
+schulsync settings --set rules.study_every_days=4 --set rules.study_start_days=14   # mehrere --set möglich
+schulsync settings --reset rules.study_every_days                                   # zurück auf den Standard
+```
+
+Angeboten werden: Erinnerung vor Terminen (`rules.reminder_minutes`), Task-Datum der Eduvidual-Aufgaben (`rules.assignment_lead_hours`) und
+ob sie zusätzlich in den Kalender kommen (`rules.assignment_calendar`), Vorlauf der Hausaufgaben und Lern-Tasks (`rules.homework_lead_days`, `rules.exam_lead_days`),
+der Lernplan (`rules.study_every_days`, `rules.study_start_days`), das Prüffenster (`rules.window_days`), `report.notify`, `report.open_on`,
+`report.keep_days`, `report.log_keep_days`, die WebUntis-Kategorien (`webuntis.categories`, z. B. `homework,exams`) und die Eduvidual-Kurse (`eduvidual.courses`, leer = alle).
+Ja/nein-Werte akzeptieren `ja`/`nein`/`true`/`false`; Listen werden durch Kommas getrennt. Die Uhrzeiten der Läufe lassen sich hier nicht ändern.
+
+Jede Änderung wird **vor dem Speichern vollständig geprüft**. Ist ein Wert ungültig (Zahl außerhalb des Bereichs, unbekannte Auswahl), nennt der Befehl den erlaubten Bereich,
+beendet sich mit Exit-Code 2 und lässt die `config.toml` **unverändert**. Kommentare und alle anderen Zeilen der Datei bleiben erhalten.
+Die Änderung gilt ab dem nächsten Lauf.
+
+**Lernplan (Beispiel):** `schulsync settings --set rules.study_every_days=4 --set rules.study_start_days=14` legt ab 14 Tagen vor einer Prüfung alle 4 Tage eine
+zusätzliche Lern-Task an, etwa für eine Prüfung am 30.10. am 16.10., 20.10., 24.10. und 28.10. `rules.study_every_days=0` schaltet den Lernplan aus. Beim Ändern oder Ausschalten werden veraltete offene zukünftige Lernaufgaben von SchulSync beim nächsten vollständigen Prüfungsabruf entfernt; erledigte und vergangene Aufgaben bleiben erhalten.
+
 ## 12. Fehlerbericht, Protokolle, Daten
 
-**Wann öffnet sich der Bericht?** Bei einem **fehlgeschlagenen oder unvollständigen** Lauf öffnet sich automatisch ein **HTML-Bericht** im Standardbrowser. Bei Erfolg öffnet sich **nichts**.
-Er erscheint **einmal pro Durchlauf**, nicht bei jedem Einzelversuch. **Derselbe Fehler am selben Tag** öffnet keinen zweiten Tab; die Berichtsdatei wird trotzdem aktualisiert. Einstellbar in
-`config.toml` unter `[report]` mit `open_on = "problems"` (Standard), `"warnings"` oder `"never"`. Gelesen wird der neueste Bericht jederzeit mit `schulsync report`.
+**Wann öffnet sich der Bericht?** Wenn derselbe Fehler bei demselben Dienst in drei aufeinanderfolgenden Läufen auftritt, öffnet sich der HTML-Bericht und bei aktivierter Einstellung erscheint eine Windows-Meldung. Verschiedene Fehler werden getrennt gezählt; ein Fehler, der in einem Lauf nicht mehr auftritt, verliert seine bisherige Serie. Vorher werden Berichte still gespeichert. `schulsync report` öffnet den neuesten Bericht jederzeit manuell. `report.open_on` steuert das Öffnen im Browser und `report.notify` die Windows-Meldung.
 
 **Was steht drin?** Zeitpunkt mit Zeitzone und Gesamtstatus, Ergebnis je Quelle und Google-Ziel, Zahlen (neu, aktualisiert, unverändert, abgesagt, übersprungen), konkret betroffene Aufgaben und Termine,
 bereits Übernommenes, letzter erfolgreicher Abruf (und ob die Daten veraltet sind) sowie **nächste Schritte** (z. B. Internet prüfen, Anmeldung erneuern). Der Bericht ist eine einzelne lokale Datei ohne
@@ -585,8 +608,8 @@ powershell -File scripts\build_exe.ps1
 Veröffentlichen: Erhöhe `__version__` in `src/schulsync/__init__.py` (und `version` in `pyproject.toml`), committe, und pushe einen passenden Tag:
 
 ```powershell
-git tag v1.0.1
-git push origin v1.0.1
+git tag v2.0.0
+git push origin v2.0.0
 ```
 
 Der Workflow `.github/workflows/release.yml` führt die Tests aus, baut die .exe und legt auf GitHub eine Release mit `SchulSync-Setup.exe` und der Prüfsumme an.
