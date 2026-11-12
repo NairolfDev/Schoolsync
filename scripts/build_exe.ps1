@@ -6,11 +6,16 @@ $ErrorActionPreference = "Stop"
 Set-Location (Split-Path $PSScriptRoot -Parent)
 $py = if (Test-Path ".venv\Scripts\python.exe") { ".venv\Scripts\python.exe" } else { "python" }
 & $py -m pip install --quiet -e ".[build]"
+if ($LASTEXITCODE -ne 0) { throw "Installation der Bauabhängigkeiten ist fehlgeschlagen." }
 & $py -m PyInstaller --noconfirm --clean --onefile --name schulsync --paths src `
     --add-data "config.example.toml;." --collect-data googleapiclient --collect-all tzdata --collect-submodules schulsync `
     packaging\entry.py
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller ist fehlgeschlagen." }
 Copy-Item dist\schulsync.exe dist\SchulSync-Setup.exe -Force
+& .\dist\SchulSync-Setup.exe --version
+if ($LASTEXITCODE -ne 0) { throw "Die fertige EXE startet nicht." }
+& .\dist\SchulSync-Setup.exe install --help
+if ($LASTEXITCODE -ne 0) { throw "Die Installer-Befehle funktionieren nicht." }
 $hash = (Get-FileHash dist\SchulSync-Setup.exe -Algorithm SHA256).Hash.ToLower()
 "$hash *SchulSync-Setup.exe" | Out-File -Encoding ascii dist\SchulSync-Setup.exe.sha256
 Write-Host "Fertig: dist\SchulSync-Setup.exe ($hash)"

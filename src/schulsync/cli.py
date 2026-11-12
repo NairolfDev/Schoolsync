@@ -1053,7 +1053,8 @@ def _cmd_setup(s: _Session) -> int:
 
 
 def _setup(s: _Session) -> int:
-    only = [n for n in ("google", "eduvidual", "webuntis") if getattr(s.args, n)]
+    # The installer also enters this wizard; its parser has no source flags.
+    only = [n for n in ("google", "eduvidual", "webuntis") if getattr(s.args, n, False)]
     everything = not only
     s.say("SchulSync - Einrichtung (Eingaben mit Enter bestätigen; leere Eingabe behält den vorhandenen Wert)")
     _ensure_config(s)
@@ -1095,7 +1096,7 @@ def _cmd_install(s: _Session) -> int:
         s.say("'install' gibt es nur in der fertigen schulsync.exe. Aus dem Quellcode: scripts\\install.ps1.")
         return 1
     frozen.install(s.say)
-    if s.yes("Jetzt einrichten (Google, Eduvidual, WebUntis)?", True):
+    if not s.args.no_setup and s.yes("Jetzt einrichten (Google, Eduvidual, WebUntis)?", True):
         return _cmd_setup(s)
     s.say("Später mit 'schulsync setup' einrichten.")
     return 0
@@ -1267,7 +1268,8 @@ def _build_parser(say: Callable[[str], None]) -> argparse.ArgumentParser:
     p.add_argument("--check", action="store_true", help="nur prüfen, nichts installieren (Exit-Code 10 = neue Version vorhanden)")
     p = add("uninstall", "Entfernt Autostart, Programm und PATH-Eintrag (Daten bleiben, außer mit --data)")
     p.add_argument("--data", action="store_true", help="auch Einstellungen, Passwörter und Datenbank löschen (mit Rückfrage)")
-    add("install", "Installiert die schulsync.exe für deinen Benutzer (Programme-Ordner und PATH)")
+    p = add("install", "Installiert die schulsync.exe für deinen Benutzer (Programme-Ordner und PATH)")
+    p.add_argument("--no-setup", action="store_true", help="nur installieren, Konten später mit 'schulsync setup' einrichten")
     p = add("autostart", "Automatische Starts einrichten, entfernen oder anzeigen")
     p.add_argument("action", choices=("install", "remove", "status"), metavar="install|remove|status", help="Aktion")
     return parser
@@ -1329,8 +1331,13 @@ def entry() -> int:
         frozen.hide_console()
     if not argv:
         argv = ["install"]
-    pause = frozen.own_console() and not auto
+    # Windows Terminal can host a double-clicked console with additional
+    # processes, so GetConsoleProcessList alone does not detect every launch.
+    pause = (frozen.own_console() or not sys.argv[1:]) and not auto
     code = main(argv)
     if pause:
-        input("Enter drücken zum Schließen ...")
+        try:
+            input("Enter drücken zum Schließen ...")
+        except EOFError:
+            pass  # non-interactive invocation with closed standard input
     return code

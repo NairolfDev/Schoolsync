@@ -111,6 +111,14 @@ Du brauchst weder Python noch Git.
    du gleich einrichten willst (Abschnitt 6). Danach in einem **neuen** PowerShell-Fenster: `schulsync --help`.
 4. Die Google-Client-Datei (Abschnitt 4.4) legst du in `%LOCALAPPDATA%\Programs\SchulSync` (neben die `schulsync.exe`); `schulsync setup --google` findet sie dort.
 
+Nur installieren, ohne den Einrichtungsassistenten zu starten:
+
+```powershell
+.\SchulSync-Setup.exe install --no-setup
+```
+
+Die Konten richtest du später mit `schulsync setup` ein.
+
 **Aktualisieren:**
 
 ```powershell

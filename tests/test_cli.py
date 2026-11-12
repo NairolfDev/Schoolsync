@@ -196,11 +196,56 @@ def all_logs(paths: Paths) -> str:
 
 def test_version_and_help_are_german(env, io):
     assert main(["--version"], env=env) == 0
-    assert "SchulSync 2.0.1" in io.out
+    assert "SchulSync 2.0.2" in io.out
     assert main(["--help"], env=env) == 0
     for word in ("Aufruf:", "Befehle:", "Optionen:", "setup", "run", "preview", "check", "status", "restore", "report", "autostart", "--home"):
         assert word in io.out
     assert "usage:" not in io.out and "options:" not in io.out
+
+
+def test_install_yes_enters_full_setup_without_source_flags(env, io, paths, monkeypatch):
+    monkeypatch.setattr(cli.frozen, "is_frozen", lambda: True)
+    monkeypatch.setattr(cli.frozen, "install", lambda say: paths.home)
+    entered = []
+    monkeypatch.setattr(cli, "_setup_google", lambda s: entered.append(s) or 2)
+    io.answers.append("ja")
+    assert main(["install"], env=env) == 2
+    assert len(entered) == 1
+    assert paths.config.is_file()
+    assert "Unerwarteter Fehler" not in io.out
+
+
+def test_install_no_setup_installs_without_questions(env, io, paths, monkeypatch):
+    monkeypatch.setattr(cli.frozen, "is_frozen", lambda: True)
+    installed = []
+    monkeypatch.setattr(cli.frozen, "install", lambda say: installed.append(True))
+    assert main(["install", "--no-setup"], env=env) == 0
+    assert installed == [True]
+    assert io.prompts == []
+    assert not paths.config.exists()
+
+
+@pytest.mark.parametrize("closed_input", [False, True])
+def test_double_click_waits_even_when_console_has_other_processes(monkeypatch, closed_input):
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(sys, "argv", ["SchulSync-Setup.exe"])
+    monkeypatch.setattr(cli.frozen, "remove_old_exe", lambda: None)
+    monkeypatch.setattr(cli.frozen, "ensure_path", lambda: None)
+    monkeypatch.setattr(cli.frozen, "own_console", lambda: False)
+    commands = []
+    monkeypatch.setattr(cli, "main", lambda argv: commands.append(argv) or 1)
+    prompts = []
+
+    def pause(prompt):
+        prompts.append(prompt)
+        if closed_input:
+            raise EOFError
+        return ""
+
+    monkeypatch.setattr("builtins.input", pause)
+    assert cli.entry() == 1
+    assert commands == [["install"]]
+    assert len(prompts) == 1
 
 
 def test_subcommand_help_and_usage_errors(env, io):
