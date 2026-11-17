@@ -1044,6 +1044,7 @@ class WebUntisAdapter:
                 kind=Kind.LATE,
                 title="Später Schule",
                 when=ItemTime(day),
+                slot=0,  # nur 1x pro Tag; macht zugleich Einträge aus Version 2.1.0 (ohne Kalendertermin) wieder "dirty"
                 description=f"{why}, der Unterricht beginnt erst um {begin:%H:%M} Uhr.",
             )
             if self._wanted(item, window, refs):

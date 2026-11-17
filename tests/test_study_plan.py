@@ -69,7 +69,9 @@ def test_sessions_dates_titles_notes_and_no_events():
     notes = got[6]["notes"]
     assert "03.11.2026" in notes and "08:00" in notes and "Lernplan: noch 6 Tage bis zur Prüfung" in notes
     assert "schulsync-id: webuntis:study:exam:30412#lern6" in notes
-    assert len(rig.google.events) == 1  # only the exam itself
+    assert len(rig.google.events) == 1 + 7  # the exam + one 18:00 calendar slot per study session
+    slots = sorted(e["start"]["dateTime"][11:16] for e in rig.google.events.values() if e["summary"].startswith("Lernen:"))
+    assert slots == ["18:00"] * 7 and all(e["reminders"]["overrides"][0]["minutes"] == 0 for e in rig.google.events.values() if e["summary"].startswith("Lernen:"))
     assert len(rig.google.open_tasks) == 1 + 7  # + the normal task at exam_lead_days
 
 
@@ -259,3 +261,16 @@ def test_unstable_exam_adoption_does_not_relabel_or_delete_task_without_old_mark
     rig.sync(replace(exam_in(23, eid="new"), id_stable=False))
     assert rig.google.task(task["id"]).get("deleted") is not True
     assert rig.google.task(task["id"])["notes"] == "user notes only"
+
+
+def test_same_day_study_sessions_follow_each_other_in_30_minute_steps():
+    import dataclasses
+    from schulsync import rules
+    r = cfg().rules
+    exams = [exam_in(20), dataclasses.replace(exam_in(20), source_id="other", title="Zweite")]
+    items = rules.study_items(exams, r)
+    day = rules.task_start_date(items[0], r)
+    one = [i for i in items if rules.task_start_date(i, r) == day]
+    assert sorted(i.slot for i in one) == [0, 1]
+    starts = sorted(rules.timed_event_start(i, r) for i in one)
+    assert [(s.hour, s.minute) for s in starts] == [(18, 0), (18, 30)]

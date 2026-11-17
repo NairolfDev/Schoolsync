@@ -393,7 +393,7 @@ def test_scheduled_18_oclock_run_follows_moved_homework_and_exam_and_a_withdrawn
     second = stack.go(RunMode.AUTO)
     assert not second.silent and second.exit_code == 0, second.console_text
 
-    assert len(stack.google.events) == n_events and stack.google.misrouted_writes() == []  # nothing duplicated
+    assert len(stack.google.events) == n_events + 1 and stack.google.misrouted_writes() == []  # nothing duplicated; +1 = 06:00 slot of the new "Später Schule"
     hw = stack.google.events[hw_id]
     assert hw["start"] == {"date": "2026-10-19"} and hw["end"] == {"date": "2026-10-20"}
     exam = stack.google.events[exam_id]

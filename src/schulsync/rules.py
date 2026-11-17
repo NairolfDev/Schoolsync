@@ -135,12 +135,19 @@ def study_offsets(cfg: RulesConfig) -> list[int]:
 def study_items(exams: list[SourceItem], cfg: RulesConfig) -> list[SourceItem]:
     """Derived Lernplan items: one per offset d = start, start-x, ... (d > 0, not exam_lead_days) per active-or-cancelled exam."""
     offsets = study_offsets(cfg)
-    return [
+    items = [
         replace(e, kind=Kind.STUDY, source_id=f"{e.source_id}{STUDY_SEP}{d}", subtype="Lernplan", id_stable=True, submitted=None, attempt=None)
         for e in exams
         if e.kind == Kind.EXAM
         for d in offsets
     ]
+    per_day: dict[date, int] = {}  # mehrere Lerneinheiten am selben Tag liegen nacheinander (18:00, 18:30, ...)
+    out = []
+    for it in sorted(items, key=lambda i: (task_start_date(i, cfg), deadline_iso(i), i.title, i.source_id)):
+        day = task_start_date(it, cfg)
+        out.append(replace(it, slot=per_day.get(day, 0)))
+        per_day[day] = per_day.get(day, 0) + 1
+    return out
 
 
 def deadline_of(item: SourceItem) -> datetime | date:
@@ -326,7 +333,46 @@ def _event_times(item: SourceItem) -> tuple[datetime | date, datetime | date]:
     return start, end if end is not None else add_real_minutes(start, 1)  # 1-minute marker
 
 
+LATE_START = time(6, 0)  # "Später Schule": Termin um 06:00
+STUDY_START = time(18, 0)  # Lerneinheiten ab 18:00, je 30 Minuten
+STUDY_MINUTES = 30
+
+
+def timed_event_start(item: SourceItem, cfg: RulesConfig) -> datetime:
+    """Start of the calendar slot of a LATE/STUDY item (Google Tasks cannot hold a time of day, the calendar can)."""
+    day = task_start_date(item, cfg)
+    if item.kind == Kind.LATE:
+        return make_local(day, LATE_START)
+    return add_real_minutes(make_local(day, STUDY_START), STUDY_MINUTES * (item.slot or 0))
+
+
+def _timed_event(item: SourceItem, cfg: RulesConfig, cancelled: bool) -> DesiredEvent:
+    start = timed_event_start(item, cfg)
+    if item.kind == Kind.LATE:
+        summary, end, lines = item.title, add_real_minutes(start, 15), []
+    else:
+        d = study_days(item)
+        left = "1 Tag" if d == 1 else f"{d} Tage"
+        summary, end = f"Lernen: {_title(item)} (noch {left})", add_real_minutes(start, STUDY_MINUTES)
+        lines = [f"Prüfung: {tb.format_deadline_de(deadline_of(item))}", f"Lernplan: noch {left} bis zur Prüfung"]
+    if cancelled:
+        summary, lines = "Abgesagt: " + summary, ["Status: Von der Quelle als abgesagt bzw. zurückgenommen gemeldet.", *lines]
+    lines.extend(_detail_lines(item))
+    return DesiredEvent(
+        summary=tb.clip(summary, tb.TITLE_LIMIT),
+        managed_text="\n".join(lines),
+        start=start,
+        end=end,
+        location=None,
+        popup_minutes=None if cancelled else 0,  # Erinnerung genau zum Beginn
+        private_props={APP_PROP: "1", PROP_UID: item.uid, PROP_SOURCE: item.source.value, PROP_KIND: item.kind.value},
+        cancelled=cancelled,
+    )
+
+
 def build_desired_event(item: SourceItem, cfg: RulesConfig, *, cancelled: bool) -> DesiredEvent:
+    if item.kind in (Kind.LATE, Kind.STUDY):
+        return _timed_event(item, cfg, cancelled)
     if item.kind == Kind.EXAM:
         prefix = f"{_line(item.subtype or '') or 'Prüfung'}: "
     else:
@@ -400,7 +446,7 @@ def build_desired_task(item: SourceItem, cfg: RulesConfig, due: date) -> Desired
 def _plan_event(state: ItemState, now: datetime, cfg: RulesConfig) -> EventPlan:
     """DESIGN 4.1."""
     item, cancelled = state.item, state.cancelled
-    if item.kind in (Kind.STUDY, Kind.LATE) or (item.kind == Kind.ASSIGNMENT and not cfg.assignment_calendar):  # nur Task
+    if item.kind == Kind.ASSIGNMENT and not cfg.assignment_calendar:  # nur Task
         if state.event_state == EventState.ACTIVE and state.event_id:
             return EventPlan(EventAction.DELETE, Action.REMOVE_EVENT, reason="tasks_only")
         return EventPlan(EventAction.SKIP, reason="no_event_for_kind")
@@ -411,9 +457,10 @@ def _plan_event(state: ItemState, now: datetime, cfg: RulesConfig) -> EventPlan:
             return EventPlan(EventAction.SKIP, reason="already_cancelled")
         if is_fully_past(item, now):
             return EventPlan(EventAction.SKIP, reason="expired")
-        return EventPlan(
-            EventAction.CREATE, Action.CREATE, build_desired_event(item, cfg, cancelled=False), "new"
-        )
+        desired = build_desired_event(item, cfg, cancelled=False)
+        if item.kind in (Kind.LATE, Kind.STUDY) and to_vienna(desired.end) <= to_vienna(now):  # Termin liegt schon hinter uns
+            return EventPlan(EventAction.SKIP, reason="expired")
+        return EventPlan(EventAction.CREATE, Action.CREATE, desired, "new")
     desired = build_desired_event(item, cfg, cancelled=cancelled)  # ACTIVE
     if desired.content_hash() == state.event_applied_hash:
         return EventPlan(EventAction.NONE, None, desired, "unchanged")
