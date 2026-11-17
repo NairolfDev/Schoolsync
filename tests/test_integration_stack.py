@@ -400,6 +400,8 @@ def test_scheduled_18_oclock_run_follows_moved_homework_and_exam_and_a_withdrawn
     assert exam["start"]["dateTime"].startswith("2026-10-23T10:00") and exam["end"]["dateTime"].startswith("2026-10-23T11:50")
     assert task("Übungsblatt 4,")["due"].startswith("2026-10-16")  # 3 calendar days before Monday 19.10.
     assert task("2. Schularbeit")["due"].startswith("2026-10-16")  # 7 calendar days before 23.10.
-    assert len(stack.google.open_tasks) == n_tasks
+    # the lesson on 16.10. (13:50) is now held: school starts after the first period -> exactly one new "Später Schule" task
+    assert len(stack.google.open_tasks) == n_tasks + 1
+    assert task("Später Schule")["due"].startswith("2026-10-16")
     entfall = event("Programmieren und Softwareentwicklung")
     assert entfall["summary"].startswith("Abgesagt:") and entfall["reminders"]["overrides"] == []

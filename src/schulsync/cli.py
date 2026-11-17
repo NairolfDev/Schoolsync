@@ -693,7 +693,7 @@ def _check(s: _Session) -> int:
 # --------------------------------------------------------------------------- status
 
 
-_KIND_DE = {Kind.ASSIGNMENT: "Abgabe", Kind.HOMEWORK: "Hausaufgabe", Kind.EXAM: "Prüfung", Kind.CANCELLATION: "Entfall", Kind.STUDY: "Lernplan"}
+_KIND_DE = {Kind.ASSIGNMENT: "Abgabe", Kind.HOMEWORK: "Hausaufgabe", Kind.EXAM: "Prüfung", Kind.CANCELLATION: "Entfall", Kind.STUDY: "Lernplan", Kind.LATE: "Später Schule"}
 
 
 def _cmd_study_preview(s: _Session) -> int:

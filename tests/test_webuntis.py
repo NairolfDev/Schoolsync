@@ -1122,3 +1122,32 @@ def test_adapter_uses_default_requests_http_when_no_factory(monkeypatch):
     monkeypatch.setattr(wu, "RequestsHttp", Dummy)
     a = WebUntisAdapter(CFG, PW)
     assert a._http is created[0] and a.source == Source.WEBUNTIS
+
+
+def test_exams_with_id_zero_get_distinct_derived_ids():
+    # HTL Grieskirchen: WebUntis liefert id=0 für alle Prüfungen; sie dürfen sich nicht gegenseitig überschreiben.
+    def exam(name, ymd):
+        raw = {"id": 0, "name": name, "subject": name, "examDate": ymd, "startTime": 800, "endTime": 850}
+        return WebUntisAdapter._exam_item(WebUntisAdapter, raw, "p", [])
+
+    a, b, a2 = exam("DBI_1", 20261117), exam("Test 1", 20261123), exam("DBI_1", 20261117)
+    assert a.uid != b.uid and a.uid == a2.uid and a.uid != "webuntis:exam:0"
+    assert not a.id_stable
+
+
+def test_late_start_task_when_first_lesson_cancelled_or_regularly_empty():
+    def les(day, hh, status):
+        s = make_local(day, datetime(2026, 1, 1, hh, 0).time())
+        return wu._Lesson(key=f"1-{day:%Y%m%d}-{hh}", start=s, end=s + timedelta(minutes=50), status=status, subject="X", teacher=None, room=None)
+
+    d1, d2, d3, d4 = date(2026, 11, 17), date(2026, 11, 18), date(2026, 11, 19), date(2026, 11, 20)
+    lessons = [les(d1, 8, "cancelled"), les(d1, 9, "regular"),  # 1. Stunde entfällt -> Später Schule
+               les(d2, 8, "regular"), les(d2, 9, "cancelled"),  # nur spätere Stunde -> nichts
+               les(d3, 9, "regular"),  # regulär nichts um 8:00 -> Später Schule
+               les(d4, 8, "cancelled")]  # ganzer Tag aus -> nichts
+    items, res = {}, wu._CatResult()
+    window = Window(local_midnight(d1), local_midnight(date(2026, 12, 20)))
+    WebUntisAdapter._late_starts(WebUntisAdapter, lessons, items, [], window, res)
+    assert sorted(i.source_id for i in items.values()) == ["late-20261117", "late-20261119"]
+    assert "entfällt" in items["webuntis:late:late-20261117"].description
+    assert "kein Unterricht" in items["webuntis:late:late-20261119"].description

@@ -29,6 +29,7 @@ class Kind(StrEnum):
     HOMEWORK = "homework"  # WebUntis: Hausaufgabe
     EXAM = "exam"  # WebUntis: Prüfung/Schularbeit
     CANCELLATION = "cancellation"  # WebUntis: Unterrichtsentfall
+    LATE = "late"  # WebUntis: erste Stunde entfällt -> Task "Später Schule" (nur Google-Task, Kennung "late-<yyyymmdd>")
     STUDY = "study"  # abgeleitet aus einer Prüfung (Lernplan): nur Google-Task, Kennung "<exam-id>#lern<d>"
 
 
@@ -47,6 +48,7 @@ KIND_CATEGORY: Mapping[Kind, Category] = {
     Kind.EXAM: Category.EXAMS,
     Kind.CANCELLATION: Category.CANCELLATIONS,
     Kind.STUDY: Category.EXAMS,
+    Kind.LATE: Category.CANCELLATIONS,
 }
 
 

@@ -96,6 +96,7 @@ Fachregeln
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
@@ -931,9 +932,14 @@ class WebUntisAdapter:
                 start = make_local(day, parse_hmm(start_raw, f"{p}.startTime"))
                 end = make_local(day, parse_hmm(end_raw, f"{p}.endTime")) if end_raw else None
                 when = self._exam_when(start, end, notes)
+        source_id, stable = str(exam_id), True
+        if exam_id == 0:  # HTL Grieskirchen etc.: WebUntis liefert id=0 für ALLE Prüfungen -> sonst bliebe nur eine übrig
+            digest = hashlib.sha1(f"{when.start_date.isoformat()}|{title}|{subject}".encode()).hexdigest()[:12]
+            source_id, stable = f"d{digest}", False  # abgeleitet -> konservative Zuordnung bei verschobenen Terminen
         return SourceItem(
             source=Source.WEBUNTIS,
-            source_id=str(exam_id),
+            source_id=source_id,
+            id_stable=stable,
             kind=Kind.EXAM,
             title=title,
             when=when,
@@ -992,6 +998,7 @@ class WebUntisAdapter:
                         f"WebUntis zeigt die Stunde {lesson.subject or 'Unterricht'} am {_de_date(lesson.start.date())} "
                         f"um {lesson.start:%H:%M} Uhr nicht mehr als Entfall an (Status: {what})."
                     )
+        self._late_starts(lessons, items, refs, window, res)
         res.items = self._sorted(items)
         res.detail = f"Weg: {route}{fallback_note}; {len(res.items)} Entfall-Einträge, Zeitraum {covered}."
         if covered == _NO_PERIOD:
@@ -1007,6 +1014,44 @@ class WebUntisAdapter:
                 )
             )
         return res
+
+    def _late_starts(
+        self, lessons: Sequence[_Lesson], items: dict[str, SourceItem], refs: Sequence[TrackedRef], window: Window, res: _CatResult
+    ) -> None:
+        """Beginnt der Unterricht eines Schultags nach der ersten Stunde (entfallen ODER regulär leer), entsteht "Später Schule"."""
+        by_day: dict[date, list[_Lesson]] = {}
+        for lesson in lessons:
+            by_day.setdefault(lesson.start.date(), []).append(lesson)
+        if not by_day:
+            return
+        # ponytail: "erste Stunde" = früheste Stundenbeginn-Uhrzeit aller Tage im Abruf (bei dir 08:00), keine eigene Einstellung
+        standard = min(min(l.start.time() for l in ls) for ls in by_day.values())
+        late: dict[str, SourceItem] = {}
+        for day, day_lessons in by_day.items():
+            held = [l for l in day_lessons if l.status != "cancelled"]
+            if not held:
+                continue  # ganzer Tag ohne Unterricht: nicht "später", sondern frei
+            begin = min(l.start for l in held)
+            if begin.time() <= standard:
+                continue
+            first_cancelled = any(l.status == "cancelled" and l.start.time() <= standard for l in day_lessons)
+            why = (
+                f"Die erste Stunde ({standard:%H:%M} Uhr) entfällt" if first_cancelled else f"In der ersten Stunde ({standard:%H:%M} Uhr) ist kein Unterricht"
+            )
+            item = SourceItem(
+                source=Source.WEBUNTIS,
+                source_id=f"late-{_ymd(day)}",
+                kind=Kind.LATE,
+                title="Später Schule",
+                when=ItemTime(day),
+                description=f"{why}, der Unterricht beginnt erst um {begin:%H:%M} Uhr.",
+            )
+            if self._wanted(item, window, refs):
+                late[item.uid] = item
+        items.update(late)
+        for ref in refs:  # Entfall zurückgenommen: der Tag hat Unterricht, aber die erste Stunde entfällt nicht mehr
+            if ref.kind == Kind.LATE and not ref.cancelled and ref.uid not in late and _ref_days(ref)[0] in by_day:
+                res.withdrawn[ref.uid] = f"Der Unterricht am {_de_date(_ref_days(ref)[0])} beginnt laut WebUntis nicht mehr später."
 
     def _lesson_item(self, lesson: _Lesson, notices: list[Notice]) -> SourceItem:
         notes: list[str] = []

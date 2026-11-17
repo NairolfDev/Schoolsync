@@ -44,7 +44,7 @@ from .timeutil import UTC, Window, add_real_minutes, make_local, minus_calendar_
 MAX_DESCRIPTION_CHARS = 3000
 UNKNOWN_END_TEXT = "Endzeit unbekannt"
 
-_DEADLINE_KINDS = (Kind.ASSIGNMENT, Kind.HOMEWORK)
+_DEADLINE_KINDS = (Kind.ASSIGNMENT, Kind.HOMEWORK, Kind.LATE)  # LATE: ganztägiges Datum, Task am selben Tag
 _SOURCE_LABEL = {Source.EDUVIDUAL: "Eduvidual", Source.WEBUNTIS: "WebUntis"}
 
 
@@ -104,6 +104,8 @@ def lead_days(kind: Kind, cfg: RulesConfig) -> int | None:
         return cfg.assignment_lead_days
     if kind == Kind.HOMEWORK:
         return cfg.homework_lead_days
+    if kind == Kind.LATE:
+        return 0
     if kind in (Kind.EXAM, Kind.STUDY):  # STUDY: only "has a task"; its date comes from study_days()
         return cfg.exam_lead_days
     return None
@@ -362,6 +364,9 @@ def build_desired_task(item: SourceItem, cfg: RulesConfig, due: date) -> Desired
     lead = lead_days(item.kind, cfg)
     if lead is None:
         raise ValueError(f"no task for kind {item.kind.value}")
+    if item.kind == Kind.LATE:  # Google Tasks kennt nur ein Datum, keine Uhrzeit
+        lines = [f"Datum: {tb.format_deadline_de(deadline_of(item))}", *_detail_lines(item), tb.task_marker_line(task_key(item))]
+        return DesiredTask(title=tb.clip(item.title, tb.TITLE_LIMIT), managed_text="\n".join(lines), due=due)
     study = item.kind == Kind.STUDY
     exam = item.kind == Kind.EXAM or study
     title = ("Lernen: " if exam else "Bearbeiten: ") + _title(item)
@@ -395,7 +400,7 @@ def build_desired_task(item: SourceItem, cfg: RulesConfig, due: date) -> Desired
 def _plan_event(state: ItemState, now: datetime, cfg: RulesConfig) -> EventPlan:
     """DESIGN 4.1."""
     item, cancelled = state.item, state.cancelled
-    if item.kind == Kind.STUDY or (item.kind == Kind.ASSIGNMENT and not cfg.assignment_calendar):  # nur Task
+    if item.kind in (Kind.STUDY, Kind.LATE) or (item.kind == Kind.ASSIGNMENT and not cfg.assignment_calendar):  # nur Task
         if state.event_state == EventState.ACTIVE and state.event_id:
             return EventPlan(EventAction.DELETE, Action.REMOVE_EVENT, reason="tasks_only")
         return EventPlan(EventAction.SKIP, reason="no_event_for_kind")

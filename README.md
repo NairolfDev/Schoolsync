@@ -459,6 +459,7 @@ Fehler **wenige Male mit wachsender Wartezeit** (Standard: 4 Versuche, 15/60/180
 | WebUntis-Hausaufgabe | „Abgabe: Titel“ am Abgabetermin | „Bearbeiten: Titel“ | **3 Kalendertage** vorher |
 | Prüfung / Schularbeit | Prüfungstermin mit Start und Ende (Art laut Quelle, z. B. „Schularbeit: …“, sonst „Prüfung: …“) | „Lernen: Titel“ | **7 Kalendertage** vorher |
 | Unterrichtsentfall | „Entfall: Titel“ mit exakter Start- und Endzeit | keine Aufgabe | – |
+| Später Schulbeginn (erste Stunde entfällt oder ist regulär leer) | kein Eintrag | „Später Schule“ am selben Tag (Google Tasks kennt nur ein Datum, keine Uhrzeit); die Beschreibung nennt den Unterrichtsbeginn | am selben Tag |
 
 Nicht übernommen werden Supplierungen, reine Lehrkraft- oder Raumänderungen und reguläre Stunden. Der Stundenplan wird nur gelesen, um Entfälle zu erkennen. Anhänge, PDFs und Bilder werden nie ausgewertet.
 

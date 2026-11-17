@@ -262,6 +262,7 @@ _KIND_NAME = {
     m.Kind.EXAM: "Prüfung",
     m.Kind.CANCELLATION: "Unterrichtsentfall",
     m.Kind.STUDY: "Lernplan",
+    m.Kind.LATE: "Später Schule",
 }
 _TARGET_NAME = {m.Target.CALENDAR: "Kalender", m.Target.TASKS: "Aufgabenliste"}
 _ACTION_NAME = {
