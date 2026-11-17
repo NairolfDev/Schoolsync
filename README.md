@@ -459,7 +459,7 @@ Fehler **wenige Male mit wachsender Wartezeit** (Standard: 4 Versuche, 15/60/180
 | WebUntis-Hausaufgabe | „Abgabe: Titel“ am Abgabetermin | „Bearbeiten: Titel“ | **3 Kalendertage** vorher |
 | Prüfung / Schularbeit | Prüfungstermin mit Start und Ende (Art laut Quelle, z. B. „Schularbeit: …“, sonst „Prüfung: …“) | „Lernen: Titel“ | **7 Kalendertage** vorher |
 | Unterrichtsentfall | „Entfall: Titel“ mit exakter Start- und Endzeit | keine Aufgabe | – |
-| Später Schulbeginn (erste Stunde entfällt oder ist regulär leer) | kein Eintrag | „Später Schule“ am selben Tag **und** ein Kalendertermin „Später Schule“ um **06:00** mit Erinnerung (Google Tasks kennt nur ein Datum); die Beschreibung nennt den Unterrichtsbeginn | am selben Tag |
+| Später Schulbeginn (erste Stunde entfällt oder ist regulär leer) | kein Eintrag | „Später Schule“ am selben Tag **und** ein Kalendertermin „Später Schule“ um **08:00** mit Erinnerung um **07:00** (Google Tasks kennt nur ein Datum); die Beschreibung nennt den Unterrichtsbeginn | am selben Tag |
 | Lernplan-Tage (`rules.study_days`) | Kalendertermin „Lernen: Titel (noch n Tage)“ ab **18:00**, je 30 Minuten; mehrere Lerneinheiten am selben Tag folgen im 30-Minuten-Takt (18:00, 18:30, …), Erinnerung zum Beginn | „Lernen: Titel (noch n Tage)“ | siehe Einstellung |
 
 Nicht übernommen werden Supplierungen, reine Lehrkraft- oder Raumänderungen und reguläre Stunden. Der Stundenplan wird nur gelesen, um Entfälle zu erkennen. Anhänge, PDFs und Bilder werden nie ausgewertet.

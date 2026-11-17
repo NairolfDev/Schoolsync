@@ -274,3 +274,12 @@ def test_same_day_study_sessions_follow_each_other_in_30_minute_steps():
     assert sorted(i.slot for i in one) == [0, 1]
     starts = sorted(rules.timed_event_start(i, r) for i in one)
     assert [(s.hour, s.minute) for s in starts] == [(18, 0), (18, 30)]
+
+
+def test_late_start_event_is_at_0800_with_one_hour_reminder():
+    from datetime import date
+    from schulsync import rules
+    from schulsync.models import ItemTime, Kind, Source, SourceItem
+    it = SourceItem(source=Source.WEBUNTIS, source_id="late-20261119", kind=Kind.LATE, title="Später Schule", when=ItemTime(date(2026, 11, 19)), slot=1)
+    ev = rules.build_desired_event(it, cfg().rules, cancelled=False)
+    assert (ev.start.hour, ev.start.minute, ev.popup_minutes) == (8, 0, 60)

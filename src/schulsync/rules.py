@@ -333,7 +333,7 @@ def _event_times(item: SourceItem) -> tuple[datetime | date, datetime | date]:
     return start, end if end is not None else add_real_minutes(start, 1)  # 1-minute marker
 
 
-LATE_START = time(6, 0)  # "Später Schule": Termin um 06:00
+LATE_START = time(8, 0)  # "Später Schule": Termin um 08:00, Erinnerung 1 Stunde vorher (07:00)
 STUDY_START = time(18, 0)  # Lerneinheiten ab 18:00, je 30 Minuten
 STUDY_MINUTES = 30
 
@@ -364,7 +364,7 @@ def _timed_event(item: SourceItem, cfg: RulesConfig, cancelled: bool) -> Desired
         start=start,
         end=end,
         location=None,
-        popup_minutes=None if cancelled else 0,  # Erinnerung genau zum Beginn
+        popup_minutes=None if cancelled else (60 if item.kind == Kind.LATE else 0),  # Später Schule: 1 h vorher, Lernen: zum Beginn
         private_props={APP_PROP: "1", PROP_UID: item.uid, PROP_SOURCE: item.source.value, PROP_KIND: item.kind.value},
         cancelled=cancelled,
     )
