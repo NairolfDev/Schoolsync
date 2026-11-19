@@ -51,6 +51,8 @@ SETTINGS: tuple[Setting, ...] = (
             "Das Task-Datum ist das Datum von (Frist minus x Stunden). 0 = stattdessen assignment_lead_days (1 Tag).", INT, 0, 168),
     Setting("rules.assignment_calendar", "Eduvidual-Aufgaben zusätzlich im Kalender",
             "ja = neben der Google-Task auch ein Kalendertermin; nein = nur Task.", BOOL),
+    Setting("rules.homework_calendar", "Hausaufgaben zusätzlich im Kalender",
+            "ja = neben der Google-Task auch ein Kalendertermin \"Abgabe\"; nein = nur Task.", BOOL),
     Setting("rules.homework_lead_days", "Hausaufgaben-Task: Tage vor der Abgabe",
             "WebUntis-Hausaufgabe: Task-Datum = Abgabe minus x Kalendertage.", INT, 0, 60),
     Setting("rules.exam_lead_days", "Lern-Task für Prüfungen: Tage vorher",

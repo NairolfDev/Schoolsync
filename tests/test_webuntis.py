@@ -315,13 +315,13 @@ def test_full_fetch_happy_path_counts_and_routes():
     res = run(w)
     assert res.complete and res.login_error is None
     assert {c: o.item_count for c, o in res.categories.items()} == {
-        Category.HOMEWORK: 2, Category.EXAMS: 2, Category.CANCELLATIONS: 2,
+        Category.HOMEWORK: 2, Category.EXAMS: 2, Category.CANCELLATIONS: 3,  # 2 Entfälle + 1 Supplierung
     }
     assert all(o.status == CategoryStatus.OK for o in res.categories.values())
     assert "REST /api/homeworks/lessons" in res.categories[Category.HOMEWORK].detail
     assert "REST /api/exams" in res.categories[Category.EXAMS].detail
     assert "JSON-RPC getTimetable" in res.categories[Category.CANCELLATIONS].detail
-    assert len(res.items) == 6
+    assert len(res.items) == 7  # incl. 1 substituted lesson
 
 
 def test_homework_items():
@@ -493,7 +493,7 @@ def test_exams_403_is_partial_success():
     assert res.categories[Category.HOMEWORK].status == CategoryStatus.OK
     assert res.categories[Category.CANCELLATIONS].status == CategoryStatus.OK
     assert not res.complete
-    assert {i.kind for i in res.items} == {Kind.HOMEWORK, Kind.CANCELLATION}  # die anderen liefern weiter
+    assert {i.kind for i in res.items} == {Kind.HOMEWORK, Kind.CANCELLATION, Kind.SUBSTITUTION}  # die anderen liefern weiter
 
 
 @pytest.mark.parametrize(

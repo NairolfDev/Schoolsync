@@ -152,7 +152,10 @@ _V5 = (
     "UPDATE items SET dirty = 1, task_base_deadline = 'unknown' WHERE kind = 'assignment' AND task_id IS NOT NULL",
 )
 
-_MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3, _V4, _V5)
+# v6: Lern-Tasks tragen das Unterrichtsfach, Lern-/Später-Schule-/Hausaufgaben-Kalendertermine ändern sich: alles neu prüfen.
+_V6 = ("UPDATE items SET dirty = 1",)
+
+_MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3, _V4, _V5, _V6)
 SCHEMA_VERSION = len(_MIGRATIONS)
 
 _LAST_FETCH_KEY = "last_complete_fetch."  # + source value; survives prune_old

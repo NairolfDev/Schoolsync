@@ -315,7 +315,7 @@ class TestCreate:
         assert evx["summary"] == "Schularbeit: Schularbeit Angewandte Mathematik"
         assert evx["start"]["dateTime"] == "2026-10-28T08:00:00+01:00" and evx["end"]["dateTime"] == "2026-10-28T09:40:00+01:00"
         tx = task_of(rig, x)
-        assert tx["title"] == "Lernen: Schularbeit Angewandte Mathematik" and tx["due"] == "2026-10-21T00:00:00.000Z"
+        assert tx["title"] == "Lernen: Angewandte Mathematik" and tx["due"] == "2026-10-21T00:00:00.000Z"
         assert rig.google.events[eid(c)]["summary"] == "Entfall: Betriebstechnik"
         assert len(rig.google.tasks) == 2  # a cancelled lesson has no task
         assert all(e["reminders"]["overrides"] == [{"method": "popup", "minutes": 1440}] for e in rig.google.events.values())

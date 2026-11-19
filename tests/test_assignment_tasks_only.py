@@ -36,10 +36,10 @@ def test_an_assignment_creates_only_a_task_dated_six_hours_before_the_deadline()
     assert eng.counts_for(_a().source).calendar.skipped == 0  # not a "skipped entry", simply no calendar for this kind
 
 
-def test_homework_and_exams_keep_their_calendar_entries():
+def test_homework_calendar_is_off_by_default_exams_keep_their_calendar_entries():
     rig = Rig(cfg=NEW)
     rig.sync(S.homework(), S.exam())
-    assert len(rig.google.events) == 2 and len(rig.google.open_tasks) == 2
+    assert len(rig.google.events) == 1 and len(rig.google.open_tasks) == 2  # only the exam; homework is a task only (homework_calendar = false)
 
 
 def test_an_existing_calendar_entry_of_an_assignment_is_deleted_once_and_the_task_moves_to_six_hours_before():

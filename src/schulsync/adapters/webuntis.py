@@ -96,6 +96,8 @@ Fachregeln
 
 from __future__ import annotations
 
+import collections
+import dataclasses
 import hashlib
 import re
 from dataclasses import dataclass, field
@@ -978,7 +980,7 @@ class WebUntisAdapter:
             except SchulSyncError as exc:
                 exc.detail = f"{exc.detail or ''} | Weg 1 {ROUTE_TT_RPC}: {why}".strip(" |")
                 raise
-        refs_by_key = {r.source_id: r for r in refs}
+        refs_by_key = {r.source_id: r for r in refs if r.kind == Kind.CANCELLATION}
         items: dict[str, SourceItem] = {}
         cancelled_keys = {l.key for l in lessons if l.status == "cancelled"}
         for lesson in lessons:
@@ -989,8 +991,13 @@ class WebUntisAdapter:
                     if item.uid not in items:
                         res.notices.extend(notices)
                     items.setdefault(item.uid, item)
+            elif lesson.status == "irregular":
+                notices = []
+                item = dataclasses.replace(self._lesson_item(lesson, notices), kind=Kind.SUBSTITUTION)
+                if self._wanted(item, window, refs):
+                    items.setdefault(item.uid, item)
             # Dieselbe Kennung in diesem Abruf auch als Entfall: widersprüchlich, also kein Rücknahme-Beleg
-            elif lesson.status in ("regular", "irregular") and lesson.key in refs_by_key and lesson.key not in cancelled_keys:
+            if lesson.status in ("regular", "irregular") and lesson.key in refs_by_key and lesson.key not in cancelled_keys:
                 ref = refs_by_key[lesson.key]
                 if not ref.cancelled:
                     what = "regulär" if lesson.status == "regular" else "Vertretung/Änderung"
@@ -998,9 +1005,17 @@ class WebUntisAdapter:
                         f"WebUntis zeigt die Stunde {lesson.subject or 'Unterricht'} am {_de_date(lesson.start.date())} "
                         f"um {lesson.start:%H:%M} Uhr nicht mehr als Entfall an (Status: {what})."
                     )
+        lesson_keys = {l.key for l in lessons}
+        for ref in refs:  # Supplierung zurückgenommen: die Stunde ist da, aber nicht mehr geändert
+            if ref.kind == Kind.SUBSTITUTION and not ref.cancelled and ref.uid not in items and ref.source_id in lesson_keys:
+                res.withdrawn[ref.uid] = f"WebUntis zeigt die Stunde am {_de_date(_ref_days(ref)[0])} nicht mehr als geändert an."
         self._late_starts(lessons, items, refs, window, res)
         res.items = self._sorted(items)
-        res.detail = f"Weg: {route}{fallback_note}; {len(res.items)} Entfall-Einträge, Zeitraum {covered}."
+        n = collections.Counter(i.kind for i in res.items)
+        res.detail = (
+            f"Weg: {route}{fallback_note}; {n[Kind.CANCELLATION]} Entfall-Einträge, {n[Kind.SUBSTITUTION]} Supplierungen, "
+            f"{n[Kind.LATE]} Tage mit späterem Schulbeginn, Zeitraum {covered}."
+        )
         if covered == _NO_PERIOD:
             # Honest, but not silent (ANFORDERUNGEN 3): "0 Entfälle" must not read like "all lessons were checked". Holidays are the
             # usual reason; a school year that WebUntis has not entered yet looks the same.
@@ -1044,7 +1059,6 @@ class WebUntisAdapter:
                 kind=Kind.LATE,
                 title="Später Schule",
                 when=ItemTime(day),
-                slot=1,  # Kalendertermin-Generation (2.3: 08:00 + Erinnerung 07:00); ändert den Hash, damit bestehende Einträge aktualisiert werden
                 description=f"{why}, der Unterricht beginnt erst um {begin:%H:%M} Uhr.",
             )
             if self._wanted(item, window, refs):

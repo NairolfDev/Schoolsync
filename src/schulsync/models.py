@@ -29,7 +29,8 @@ class Kind(StrEnum):
     HOMEWORK = "homework"  # WebUntis: Hausaufgabe
     EXAM = "exam"  # WebUntis: Prüfung/Schularbeit
     CANCELLATION = "cancellation"  # WebUntis: Unterrichtsentfall
-    LATE = "late"  # WebUntis: erste Stunde entfällt -> Task "Später Schule" (nur Google-Task, Kennung "late-<yyyymmdd>")
+    LATE = "late"  # WebUntis: Unterricht beginnt nach der ersten Stunde -> Kalendertermin "Später Schule" (Kennung "late-<yyyymmdd>")
+    SUBSTITUTION = "substitution"  # WebUntis: geänderte Stunde (Supplierung, Raum-/Lehrkraftwechsel) -> nur Kalendereintrag
     STUDY = "study"  # abgeleitet aus einer Prüfung (Lernplan): nur Google-Task, Kennung "<exam-id>#lern<d>"
 
 
@@ -49,6 +50,7 @@ KIND_CATEGORY: Mapping[Kind, Category] = {
     Kind.CANCELLATION: Category.CANCELLATIONS,
     Kind.STUDY: Category.EXAMS,
     Kind.LATE: Category.CANCELLATIONS,
+    Kind.SUBSTITUTION: Category.CANCELLATIONS,
 }
 
 
@@ -222,7 +224,6 @@ class SourceItem:
     subtype: str | None = None  # Art laut Quelle, z. B. "Schularbeit", "Test"; bestimmt das Präfix bei Prüfungen
     submitted: bool | None = None  # Eduvidual: Abgabe eingereicht? None = unbekannt (dann nie automatisch abhaken)
     attempt: int | None = None  # Eduvidual: Versuchsnummer; steigt, wenn die Lehrkraft zur Überarbeitung zurückgibt
-    slot: int | None = None  # Lernplan: Reihenfolge der Lerneinheiten desselben Tages (0 = 18:00, 1 = 18:30, ...)
 
     @property
     def uid(self) -> str:
@@ -251,7 +252,6 @@ class SourceItem:
             # nur wenn bekannt: ältere gespeicherte Einträge behalten so denselben Inhalts-Hash
             **({"submitted": self.submitted} if self.submitted is not None else {}),
             **({"attempt": self.attempt} if self.attempt is not None else {}),
-            **({"slot": self.slot} if self.slot is not None else {}),
         }
 
     @classmethod
@@ -273,7 +273,6 @@ class SourceItem:
             subtype=d.get("subtype"),
             submitted=d.get("submitted"),
             attempt=d.get("attempt"),
-            slot=d.get("slot"),
         )
 
     def content_hash(self) -> str:

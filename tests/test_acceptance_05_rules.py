@@ -91,7 +91,7 @@ def test_exam_keeps_its_real_start_and_end_and_gets_a_learning_task_seven_days_b
     start, end = event_span(ev)
     assert same_instant(start, at(2026, 10, 28, 8, 0)) and same_instant(end, at(2026, 10, 28, 9, 40))
     task = task_for(world.google, EXAM.uid)
-    assert task["title"] == f"Lernen: {EXAM.title}"
+    assert task["title"] == f"Lernen: {EXAM.course}"
     assert due_of(task) == D(2026, 10, 21)
     assert "28.10.2026 08:00" in task["notes"]
 
@@ -104,7 +104,7 @@ def test_exam_with_only_a_known_start_is_a_one_minute_marker_that_says_the_end_i
     start, end = event_span(ev)
     assert same_instant(start, at(2026, 10, 22, 9, 0)) and end.astimezone(UTC) - start.astimezone(UTC) == ONE_MINUTE
     assert "Endzeit unbekannt" in description_of(ev)
-    assert task_for(world.google, item.uid)["title"] == f"Lernen: {item.title}"
+    assert task_for(world.google, item.uid)["title"] == f"Lernen: {item.course}"
     assert due_of(task_for(world.google, item.uid)) == D(2026, 10, 15)
 
 
@@ -186,7 +186,7 @@ def test_task_date_is_the_deadline_minus_calendar_days_but_never_before_today(wo
     _run_one(world, item)
     task = task_for(world.google, item.uid)
     prefix = "Lernen: " if item.kind == Kind.EXAM else "Bearbeiten: "
-    assert task["title"] == prefix + item.title
+    assert task["title"] == prefix + (item.course if item.kind == Kind.EXAM else item.title)
     assert due_of(task) == expected_due
     assert task["due"] == f"{expected_due.isoformat()}T00:00:00.000Z"  # Tasks knows a date only
 
@@ -371,6 +371,6 @@ def test_incomplete_data_is_flagged_in_the_entry_and_reported_not_invented(world
 def test_a_task_is_created_once_at_discovery_for_every_task_kind_and_never_for_a_lesson(world: World):
     _standard_run(world)
     assert sorted(t["title"] for t in world.google.tasks) == sorted(
-        [f"Bearbeiten: {ASSIGNMENT.title}", f"Bearbeiten: {HOMEWORK.title}", f"Lernen: {EXAM.title}"]
+        [f"Bearbeiten: {ASSIGNMENT.title}", f"Bearbeiten: {HOMEWORK.title}", f"Lernen: {EXAM.course}"]
     )
     assert tasks_for(world.google, LESSON.uid) == []

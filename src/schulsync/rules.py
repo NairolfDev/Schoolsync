@@ -104,8 +104,6 @@ def lead_days(kind: Kind, cfg: RulesConfig) -> int | None:
         return cfg.assignment_lead_days
     if kind == Kind.HOMEWORK:
         return cfg.homework_lead_days
-    if kind == Kind.LATE:
-        return 0
     if kind in (Kind.EXAM, Kind.STUDY):  # STUDY: only "has a task"; its date comes from study_days()
         return cfg.exam_lead_days
     return None
@@ -141,13 +139,7 @@ def study_items(exams: list[SourceItem], cfg: RulesConfig) -> list[SourceItem]:
         if e.kind == Kind.EXAM
         for d in offsets
     ]
-    per_day: dict[date, int] = {}  # mehrere Lerneinheiten am selben Tag liegen nacheinander (18:00, 18:30, ...)
-    out = []
-    for it in sorted(items, key=lambda i: (task_start_date(i, cfg), deadline_iso(i), i.title, i.source_id)):
-        day = task_start_date(it, cfg)
-        out.append(replace(it, slot=per_day.get(day, 0)))
-        per_day[day] = per_day.get(day, 0) + 1
-    return out
+    return items
 
 
 def deadline_of(item: SourceItem) -> datetime | date:
@@ -274,6 +266,10 @@ def _safe_url(url: str | None) -> str | None:
     return u[: len(parts.scheme)] + rebuilt[len(parts.scheme) :]  # keep the scheme's original case
 
 
+def _subject(item: SourceItem) -> str:
+    return _line(item.course or "") or _title(item)
+
+
 def _title(item: SourceItem) -> str:
     return _line(item.title) or "(ohne Titel)"
 
@@ -322,7 +318,7 @@ def _detail_lines(item: SourceItem) -> list[str]:
     return lines
 
 
-_EVENT_PREFIX = {Kind.ASSIGNMENT: "Abgabe: ", Kind.HOMEWORK: "Abgabe: ", Kind.CANCELLATION: "Entfall: "}
+_EVENT_PREFIX = {Kind.ASSIGNMENT: "Abgabe: ", Kind.HOMEWORK: "Abgabe: ", Kind.CANCELLATION: "Entfall: ", Kind.SUBSTITUTION: "Supplierung: "}
 
 
 def _event_times(item: SourceItem) -> tuple[datetime | date, datetime | date]:
@@ -334,45 +330,32 @@ def _event_times(item: SourceItem) -> tuple[datetime | date, datetime | date]:
 
 
 LATE_START = time(8, 0)  # "Später Schule": Termin um 08:00, Erinnerung 1 Stunde vorher (07:00)
-STUDY_START = time(18, 0)  # Lerneinheiten ab 18:00, je 30 Minuten
-STUDY_MINUTES = 30
 
 
-def timed_event_start(item: SourceItem, cfg: RulesConfig) -> datetime:
-    """Start of the calendar slot of a LATE/STUDY item (Google Tasks cannot hold a time of day, the calendar can)."""
-    day = task_start_date(item, cfg)
-    if item.kind == Kind.LATE:
-        return make_local(day, LATE_START)
-    return add_real_minutes(make_local(day, STUDY_START), STUDY_MINUTES * (item.slot or 0))
-
-
-def _timed_event(item: SourceItem, cfg: RulesConfig, cancelled: bool) -> DesiredEvent:
-    start = timed_event_start(item, cfg)
-    if item.kind == Kind.LATE:
-        summary, end, lines = item.title, add_real_minutes(start, 15), []
-    else:
-        d = study_days(item)
-        left = "1 Tag" if d == 1 else f"{d} Tage"
-        summary, end = f"Lernen: {_title(item)} (noch {left})", add_real_minutes(start, STUDY_MINUTES)
-        lines = [f"Prüfung: {tb.format_deadline_de(deadline_of(item))}", f"Lernplan: noch {left} bis zur Prüfung"]
+def _late_event(item: SourceItem, cfg: RulesConfig, cancelled: bool) -> DesiredEvent:
+    """Google Tasks cannot hold a time of day, the calendar can: "Später Schule" is a calendar event only."""
+    start = make_local(item.when.start_date, LATE_START)
+    lines: list[str] = []
+    summary = item.title
     if cancelled:
-        summary, lines = "Abgesagt: " + summary, ["Status: Von der Quelle als abgesagt bzw. zurückgenommen gemeldet.", *lines]
+        summary = "Abgesagt: " + summary
+        lines.append("Status: Von der Quelle als abgesagt bzw. zurückgenommen gemeldet.")
     lines.extend(_detail_lines(item))
     return DesiredEvent(
         summary=tb.clip(summary, tb.TITLE_LIMIT),
         managed_text="\n".join(lines),
         start=start,
-        end=end,
+        end=add_real_minutes(start, 15),
         location=None,
-        popup_minutes=None if cancelled else (60 if item.kind == Kind.LATE else 0),  # Später Schule: 1 h vorher, Lernen: zum Beginn
+        popup_minutes=None if cancelled else 60,  # Erinnerung 1 Stunde vorher
         private_props={APP_PROP: "1", PROP_UID: item.uid, PROP_SOURCE: item.source.value, PROP_KIND: item.kind.value},
         cancelled=cancelled,
     )
 
 
 def build_desired_event(item: SourceItem, cfg: RulesConfig, *, cancelled: bool) -> DesiredEvent:
-    if item.kind in (Kind.LATE, Kind.STUDY):
-        return _timed_event(item, cfg, cancelled)
+    if item.kind == Kind.LATE:
+        return _late_event(item, cfg, cancelled)
     if item.kind == Kind.EXAM:
         prefix = f"{_line(item.subtype or '') or 'Prüfung'}: "
     else:
@@ -410,12 +393,9 @@ def build_desired_task(item: SourceItem, cfg: RulesConfig, due: date) -> Desired
     lead = lead_days(item.kind, cfg)
     if lead is None:
         raise ValueError(f"no task for kind {item.kind.value}")
-    if item.kind == Kind.LATE:  # Google Tasks kennt nur ein Datum, keine Uhrzeit
-        lines = [f"Datum: {tb.format_deadline_de(deadline_of(item))}", *_detail_lines(item), tb.task_marker_line(task_key(item))]
-        return DesiredTask(title=tb.clip(item.title, tb.TITLE_LIMIT), managed_text="\n".join(lines), due=due)
     study = item.kind == Kind.STUDY
     exam = item.kind == Kind.EXAM or study
-    title = ("Lernen: " if exam else "Bearbeiten: ") + _title(item)
+    title = "Lernen: " + _subject(item) if exam else "Bearbeiten: " + _title(item)  # gelernt wird das Fach, nicht der Prüfungsname
     if study:
         d = study_days(item)
         title += f" (noch {'1 Tag' if d == 1 else f'{d} Tage'})"
@@ -446,7 +426,7 @@ def build_desired_task(item: SourceItem, cfg: RulesConfig, due: date) -> Desired
 def _plan_event(state: ItemState, now: datetime, cfg: RulesConfig) -> EventPlan:
     """DESIGN 4.1."""
     item, cancelled = state.item, state.cancelled
-    if item.kind == Kind.ASSIGNMENT and not cfg.assignment_calendar:  # nur Task
+    if item.kind == Kind.STUDY or (item.kind == Kind.HOMEWORK and not cfg.homework_calendar) or (item.kind == Kind.ASSIGNMENT and not cfg.assignment_calendar):  # nur Task
         if state.event_state == EventState.ACTIVE and state.event_id:
             return EventPlan(EventAction.DELETE, Action.REMOVE_EVENT, reason="tasks_only")
         return EventPlan(EventAction.SKIP, reason="no_event_for_kind")
@@ -458,7 +438,7 @@ def _plan_event(state: ItemState, now: datetime, cfg: RulesConfig) -> EventPlan:
         if is_fully_past(item, now):
             return EventPlan(EventAction.SKIP, reason="expired")
         desired = build_desired_event(item, cfg, cancelled=False)
-        if item.kind in (Kind.LATE, Kind.STUDY) and to_vienna(desired.end) <= to_vienna(now):  # Termin liegt schon hinter uns
+        if item.kind == Kind.LATE and to_vienna(desired.end) <= to_vienna(now):  # Termin liegt schon hinter uns
             return EventPlan(EventAction.SKIP, reason="expired")
         return EventPlan(EventAction.CREATE, Action.CREATE, desired, "new")
     desired = build_desired_event(item, cfg, cancelled=cancelled)  # ACTIVE
@@ -481,6 +461,8 @@ def _plan_task(state: ItemState, now: datetime, cfg: RulesConfig) -> TaskPlan:
     item, cancelled = state.item, state.cancelled
     lead = lead_days(item.kind, cfg)
     if lead is None:
+        if item.kind == Kind.LATE and state.task_state == TaskState.OPEN:  # bis 2.3 gab es zusätzlich eine Task
+            return TaskPlan(TaskAction.REMOVE, reason="events_only")
         return TaskPlan(TaskAction.NONE, reason="no_task_for_kind")
     ts = state.task_state
     returned = (  # the teacher handed the submission back: a NEW task, the finished one stays finished

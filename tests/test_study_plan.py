@@ -19,7 +19,7 @@ def exam_in(days: int, eid: str = "30412", **kw):
     return S.exam(eid=eid, start=d, end=d.replace(hour=9, minute=40), **kw)
 
 
-def study(rig: Rig, title: str = "Schularbeit Angewandte Mathematik") -> dict[int, dict]:
+def study(rig: Rig, title: str = "Angewandte Mathematik") -> dict[int, dict]:
     """open study tasks of one exam by d"""
     pre = f"Lernen: {title} (noch "
     return {int(t["title"][len(pre):].split()[0]): t for t in rig.google.open_tasks if t["title"].startswith(pre)}
@@ -65,13 +65,11 @@ def test_sessions_dates_titles_notes_and_no_events():
     assert {d: t["due"][:10] for d, t in got.items()} == {
         14: "2026-10-20", 12: "2026-10-22", 10: "2026-10-24", 8: "2026-10-26", 6: "2026-10-28", 4: "2026-10-30", 2: "2026-11-01"
     }
-    assert got[6]["title"] == "Lernen: Schularbeit Angewandte Mathematik (noch 6 Tage)"
+    assert got[6]["title"] == "Lernen: Angewandte Mathematik (noch 6 Tage)"
     notes = got[6]["notes"]
     assert "03.11.2026" in notes and "08:00" in notes and "Lernplan: noch 6 Tage bis zur Prüfung" in notes
     assert "schulsync-id: webuntis:study:exam:30412#lern6" in notes
-    assert len(rig.google.events) == 1 + 7  # the exam + one 18:00 calendar slot per study session
-    slots = sorted(e["start"]["dateTime"][11:16] for e in rig.google.events.values() if e["summary"].startswith("Lernen:"))
-    assert slots == ["18:00"] * 7 and all(e["reminders"]["overrides"][0]["minutes"] == 0 for e in rig.google.events.values() if e["summary"].startswith("Lernen:"))
+    assert len(rig.google.events) == 1  # only the exam itself
     assert len(rig.google.open_tasks) == 1 + 7  # + the normal task at exam_lead_days
 
 
@@ -128,10 +126,10 @@ def test_completed_session_stays_done_after_exam_move():
 
 def test_two_exams_do_not_mix():
     rig = Rig(cfg=cfg())
-    rig.sync(exam_in(20), exam_in(25, eid="2", title="Test Physik"))
+    rig.sync(exam_in(20), exam_in(25, eid="2", title="Test Physik", course="Physik"))
     assert sorted(study(rig)) == [2, 4, 6, 8, 10, 12, 14]
-    assert sorted(study(rig, "Test Physik")) == [2, 4, 6, 8, 10, 12, 14]
-    assert study(rig, "Test Physik")[14]["due"].startswith("2026-10-25")
+    assert sorted(study(rig, "Physik")) == [2, 4, 6, 8, 10, 12, 14]
+    assert study(rig, "Physik")[14]["due"].startswith("2026-10-25")
     assert study(rig)[14]["due"].startswith("2026-10-20")
 
 
@@ -263,23 +261,20 @@ def test_unstable_exam_adoption_does_not_relabel_or_delete_task_without_old_mark
     assert rig.google.task(task["id"])["notes"] == "user notes only"
 
 
-def test_same_day_study_sessions_follow_each_other_in_30_minute_steps():
-    import dataclasses
-    from schulsync import rules
-    r = cfg().rules
-    exams = [exam_in(20), dataclasses.replace(exam_in(20), source_id="other", title="Zweite")]
-    items = rules.study_items(exams, r)
-    day = rules.task_start_date(items[0], r)
-    one = [i for i in items if rules.task_start_date(i, r) == day]
-    assert sorted(i.slot for i in one) == [0, 1]
-    starts = sorted(rules.timed_event_start(i, r) for i in one)
-    assert [(s.hour, s.minute) for s in starts] == [(18, 0), (18, 30)]
-
-
-def test_late_start_event_is_at_0800_with_one_hour_reminder():
+def test_late_start_is_a_calendar_event_at_0800_with_one_hour_reminder_and_no_task():
     from datetime import date
-    from schulsync import rules
     from schulsync.models import ItemTime, Kind, Source, SourceItem
-    it = SourceItem(source=Source.WEBUNTIS, source_id="late-20261119", kind=Kind.LATE, title="Später Schule", when=ItemTime(date(2026, 11, 19)), slot=1)
-    ev = rules.build_desired_event(it, cfg().rules, cancelled=False)
-    assert (ev.start.hour, ev.start.minute, ev.popup_minutes) == (8, 0, 60)
+    day = (NOW + timedelta(days=3)).date()
+    it = SourceItem(source=Source.WEBUNTIS, source_id=f"late-{day:%Y%m%d}", kind=Kind.LATE, title="Später Schule", when=ItemTime(day))
+    rig = Rig(cfg=Config())
+    rig.sync(it)
+    (ev,) = rig.google.events.values()
+    assert ev["summary"] == "Später Schule" and ev["start"]["dateTime"][11:16] == "08:00"
+    assert ev["reminders"]["overrides"] == [{"method": "popup", "minutes": 60}]
+    assert rig.google.open_tasks == []
+
+
+def test_study_task_title_uses_the_subject_not_the_exam_name():
+    rig = Rig(cfg=cfg())
+    rig.sync(exam_in(20, title="Test 1", course="SYP1"))
+    assert all(t["title"].startswith("Lernen: SYP1") for t in rig.google.open_tasks) and rig.google.open_tasks

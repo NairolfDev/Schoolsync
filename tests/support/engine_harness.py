@@ -29,7 +29,7 @@ class Rig:
 
     def __init__(self, now: datetime = NOW, cfg: Config | None = None, **google_kw: Any) -> None:
         self.now = now
-        self.cfg = cfg or Config(rules=RulesConfig(window_days=21, assignment_lead_days=3, assignment_lead_hours=0, assignment_calendar=True))
+        self.cfg = cfg or Config(rules=RulesConfig(window_days=21, assignment_lead_days=3, assignment_lead_hours=0, assignment_calendar=True, homework_calendar=True))
         self.store = StateStore(":memory:")
         self.google = FakeGoogle(**google_kw)
         self.adapters = {s: FakeAdapter(s) for s in Source}
@@ -80,7 +80,7 @@ class Env:
     ) -> None:
         self.paths = Paths(tmp_path / "SchulSync")
         self.paths.ensure()
-        self.cfg = cfg or Config(rules=RulesConfig(window_days=21, assignment_lead_days=3, assignment_lead_hours=0, assignment_calendar=True))
+        self.cfg = cfg or Config(rules=RulesConfig(window_days=21, assignment_lead_days=3, assignment_lead_hours=0, assignment_calendar=True, homework_calendar=True))
         if failures_before_report is not None:  # legacy runner tests expect a problem to show at once; None = use cfg as is
             self.cfg = replace(self.cfg, retry=replace(self.cfg.retry, failures_before_report=failures_before_report))
         self.now = now

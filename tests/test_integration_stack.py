@@ -53,7 +53,7 @@ class Stack:
             eduvidual=EduvidualConfig(username="max.mustermann", method="webservice"),
             webuntis=WebUntisConfig(username="beispiel.max"),
             google=GoogleConfig(calendar_id="cal-id", tasklist_id="list-id"),
-            rules=RulesConfig(window_days=21, assignment_lead_days=3, assignment_lead_hours=0, assignment_calendar=True),
+            rules=RulesConfig(window_days=21, assignment_lead_days=3, assignment_lead_hours=0, assignment_calendar=True, homework_calendar=True),
             retry=RetryConfig(failures_before_report=1),
         )
         self.secrets = MemorySecretStore({factories.SECRET_EDUVIDUAL: EDU_PASSWORD, factories.SECRET_WEBUNTIS: WU_PASSWORD})
@@ -123,7 +123,7 @@ def test_a_whole_day_with_both_real_adapters_creates_everything_once(stack):
     # WebUntis, EXACTLY (a lower bound would also pass if entries were lost): 2 homework + 2 exams + 2 cancelled lessons as
     # events, 2 homework + 2 exams as tasks. Left out on purpose: homework due 04.11. (the window ends BEFORE that day), an
     # already expired one and one without a date; the exam of 10.11. (outside the window).
-    assert (wu.calendar.new, wu.tasks.new) == (6, 4) and wu.calendar.failed == wu.tasks.failed == 0
+    assert (wu.calendar.new, wu.tasks.new) == (7, 4) and wu.calendar.failed == wu.tasks.failed == 0
     wu_events = {
         e["summary"] for e in stack.google.events.values() if e["extendedProperties"]["private"]["schulsync_source"] == "webuntis"
     }
@@ -133,6 +133,7 @@ def test_a_whole_day_with_both_real_adapters_creates_everything_once(stack):
         "Entfall: Deutsch",
         "Entfall: Programmieren und Softwareentwicklung",
         "Schularbeit: 2. Schularbeit",
+        "Supplierung: Angewandte Mathematik",
         "Test: NWP",
     }
     assert not any("Projektdokumentation abgeben" in e["summary"] or "Schon abgelaufen" in e["summary"] for e in stack.google.events.values())
@@ -393,15 +394,16 @@ def test_scheduled_18_oclock_run_follows_moved_homework_and_exam_and_a_withdrawn
     second = stack.go(RunMode.AUTO)
     assert not second.silent and second.exit_code == 0, second.console_text
 
-    assert len(stack.google.events) == n_events + 1 and stack.google.misrouted_writes() == []  # nothing duplicated; +1 = 06:00 slot of the new "Später Schule"
+    assert len(stack.google.events) == n_events + 1 and stack.google.misrouted_writes() == []  # nothing duplicated; +1 = 08:00 event "Später Schule"
     hw = stack.google.events[hw_id]
     assert hw["start"] == {"date": "2026-10-19"} and hw["end"] == {"date": "2026-10-20"}
     exam = stack.google.events[exam_id]
     assert exam["start"]["dateTime"].startswith("2026-10-23T10:00") and exam["end"]["dateTime"].startswith("2026-10-23T11:50")
     assert task("Übungsblatt 4,")["due"].startswith("2026-10-16")  # 3 calendar days before Monday 19.10.
-    assert task("2. Schularbeit")["due"].startswith("2026-10-16")  # 7 calendar days before 23.10.
-    # the lesson on 16.10. (13:50) is now held: school starts after the first period -> exactly one new "Später Schule" task
-    assert len(stack.google.open_tasks) == n_tasks + 1
-    assert task("Später Schule")["due"].startswith("2026-10-16")
+    assert task("Lernen: AM")["due"].startswith("2026-10-16")  # 7 calendar days before 23.10.
+    # the lesson on 16.10. (13:50) is now held: school starts after the first period -> exactly one new "Später Schule" event
+    assert len(stack.google.open_tasks) == n_tasks
+    late = event("Später Schule")
+    assert late["start"]["dateTime"].startswith("2026-10-16T08:00") and late["reminders"]["overrides"][0]["minutes"] == 60
     entfall = event("Programmieren und Softwareentwicklung")
     assert entfall["summary"].startswith("Abgesagt:") and entfall["reminders"]["overrides"] == []

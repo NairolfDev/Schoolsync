@@ -31,6 +31,7 @@ window_days = 31              # neue Termine: heute 00:00 bis heute + 31 Kalende
 assignment_lead_hours = 24    # Eduvidual-Aufgabe: Task-Datum = Datum von (Frist minus 24 Stunden)
 assignment_lead_days = 1      # nur wenn assignment_lead_hours = 0: Frist minus 1 Kalendertag
 assignment_calendar = false   # Eduvidual-Aufgaben nur als Google-Task; true = zusätzlich als Kalendertermin
+homework_calendar = false     # WebUntis-Hausaufgaben nur als Google-Task; true = zusätzlich als Kalendertermin "Abgabe"
 homework_lead_days = 3        # WebUntis-Hausaufgabe: Frist minus 3 Kalendertage
 exam_lead_days = 7            # Prüfung/Schularbeit: Lern-Task = Termin minus 7 Kalendertage
 study_every_days = 0          # Lernplan: alle x Tage vor einer Prüfung eine zusätzliche Lern-Task (0 = aus)
