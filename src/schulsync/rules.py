@@ -335,6 +335,8 @@ LATE_START = time(8, 0)  # "Später Schule": Termin um 08:00, Erinnerung 1 Stund
 def _late_event(item: SourceItem, cfg: RulesConfig, cancelled: bool) -> DesiredEvent:
     """Google Tasks cannot hold a time of day, the calendar can: "Später Schule" is a calendar event only."""
     start = make_local(item.when.start_date, LATE_START)
+    begin = to_vienna(item.when.start) if isinstance(item.when.start, datetime) else None  # Unterrichtsbeginn
+    end = begin if begin is not None and begin > start else add_real_minutes(start, 15)
     lines: list[str] = []
     summary = item.title
     if cancelled:
@@ -345,7 +347,7 @@ def _late_event(item: SourceItem, cfg: RulesConfig, cancelled: bool) -> DesiredE
         summary=tb.clip(summary, tb.TITLE_LIMIT),
         managed_text="\n".join(lines),
         start=start,
-        end=add_real_minutes(start, 15),
+        end=end,
         location=None,
         popup_minutes=None if cancelled else 60,  # Erinnerung 1 Stunde vorher
         private_props={APP_PROP: "1", PROP_UID: item.uid, PROP_SOURCE: item.source.value, PROP_KIND: item.kind.value},

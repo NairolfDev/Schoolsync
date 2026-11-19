@@ -278,3 +278,14 @@ def test_study_task_title_uses_the_subject_not_the_exam_name():
     rig = Rig(cfg=cfg())
     rig.sync(exam_in(20, title="Test 1", course="SYP1"))
     assert all(t["title"].startswith("Lernen: SYP1") for t in rig.google.open_tasks) and rig.google.open_tasks
+
+
+def test_late_start_event_runs_until_the_real_start_of_school():
+    from schulsync import rules
+    from schulsync.models import ItemTime, Kind, Source, SourceItem
+    from schulsync.timeutil import make_local
+    from datetime import date, time
+    d = date(2026, 11, 26)
+    it = SourceItem(source=Source.WEBUNTIS, source_id="late-20261126", kind=Kind.LATE, title="Später Schule", when=ItemTime(make_local(d, time(9, 55))))
+    ev = rules.build_desired_event(it, cfg().rules, cancelled=False)
+    assert (ev.start.hour, ev.start.minute, ev.end.hour, ev.end.minute) == (8, 0, 9, 55)

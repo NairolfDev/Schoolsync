@@ -994,6 +994,8 @@ class WebUntisAdapter:
             elif lesson.status == "irregular":
                 notices = []
                 item = dataclasses.replace(self._lesson_item(lesson, notices), kind=Kind.SUBSTITUTION)
+                if not lesson.subject and lesson.teacher:  # ohne Fach wenigstens die Lehrkraft im Titel
+                    item = dataclasses.replace(item, title=f"{item.title} ({lesson.teacher})")
                 if self._wanted(item, window, refs):
                     items.setdefault(item.uid, item)
             # Dieselbe Kennung in diesem Abruf auch als Entfall: widersprüchlich, also kein Rücknahme-Beleg
@@ -1058,7 +1060,7 @@ class WebUntisAdapter:
                 source_id=f"late-{_ymd(day)}",
                 kind=Kind.LATE,
                 title="Später Schule",
-                when=ItemTime(day),
+                when=ItemTime(begin),  # Unterrichtsbeginn; das Datum bestimmt den Tag, der Termin läuft von 08:00 bis dahin
                 description=f"{why}, der Unterricht beginnt erst um {begin:%H:%M} Uhr.",
             )
             if self._wanted(item, window, refs):

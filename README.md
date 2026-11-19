@@ -460,7 +460,7 @@ Fehler **wenige Male mit wachsender Wartezeit** (Standard: 4 Versuche, 15/60/180
 | Prüfung / Schularbeit | Prüfungstermin mit Start und Ende (Art laut Quelle, z. B. „Schularbeit: …“, sonst „Prüfung: …“) | „Lernen: Unterrichtsfach“ (nicht der Prüfungsname) | **7 Kalendertage** vorher |
 | Unterrichtsentfall | „Entfall: Titel“ mit exakter Start- und Endzeit | keine Aufgabe | – |
 | Geänderte Stunde (Supplierung, Raum-/Lehrkraftwechsel) | „Supplierung: Fach“ zur Stundenzeit, neue Lehrkraft/neuer Raum in der Beschreibung | keine Aufgabe | – |
-| Später Schulbeginn (erste Stunde entfällt oder ist regulär leer) | **nur** ein Kalendertermin „Später Schule“ um **08:00** (Erinnerung um **07:00**); die Beschreibung nennt den Unterrichtsbeginn | keine Aufgabe (Google Tasks kann keine Uhrzeit speichern) | am selben Tag |
+| Später Schulbeginn (erste Stunde entfällt oder ist regulär leer) | **nur** ein Kalendertermin „Später Schule“ von **08:00 bis zum echten Unterrichtsbeginn** (Erinnerung um **07:00**) | keine Aufgabe (Google Tasks kann keine Uhrzeit speichern) | am selben Tag |
 | Lernplan-Tage (`rules.study_days`) | **kein** Kalendereintrag | „Lernen: Unterrichtsfach (noch n Tage)“ | siehe Einstellung |
 
 Nicht übernommen werden reguläre Stunden. Der Stundenplan wird nur gelesen, um Entfälle zu erkennen. Anhänge, PDFs und Bilder werden nie ausgewertet.
